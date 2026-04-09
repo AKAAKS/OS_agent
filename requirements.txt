@@ -1,0 +1,30 @@
+# Core
+langgraph>=0.2.0
+openai>=1.40.0
+
+# System monitoring
+psutil>=6.0.0
+pywin32>=306
+wmi>=1.5.1
+
+# Audio
+pycaw>=20240210
+comtypes>=1.4.0
+
+# UI
+PyQt6>=6.7.0
+
+# Memory
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+
+# Config
+pyyaml>=6.0.0
+
+# Utilities
+rich>=13.0.0
+winotify>=1.1.0
+
+# Testing
+pytest>=8.0.0
+pytest-mock>=3.14.0

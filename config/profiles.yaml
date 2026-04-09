@@ -1,0 +1,90 @@
+# Process Profiles — Edit these to match your setup
+
+profiles:
+  gaming:
+    trigger_processes:
+      - "steam.exe"
+      - "EpicGamesLauncher.exe"
+      - "GalaxyClient.exe"
+      - "Battle.net.exe"
+    always_keep:
+      - "discord.exe"
+      - "steam.exe"
+      - "steamwebhelper.exe"
+      - "nvcontainer.exe"
+      - "explorer.exe"
+    kill_candidates:
+      - "OneDrive.exe"
+      - "Teams.exe"
+      - "Widgets.exe"
+      - "SearchHost.exe"
+      - "YourPhone.exe"
+      - "CalculatorApp.exe"
+    actions:
+      set_game_priority: high
+      defer_windows_update: true
+      defer_defender_scan: true
+      trim_idle_working_sets: true
+
+  coding:
+    trigger_processes:
+      - "Code.exe"
+      - "devenv.exe"
+      - "pycharm64.exe"
+      - "idea64.exe"
+    always_keep:
+      - "Code.exe"
+      - "WindowsTerminal.exe"
+      - "docker.exe"
+      - "git.exe"
+      - "node.exe"
+      - "python.exe"
+      - "explorer.exe"
+    kill_candidates:
+      - "Widgets.exe"
+      - "YourPhone.exe"
+    actions:
+      defer_windows_update: true
+
+  streaming:
+    trigger_processes: []  # Detected by browser + media site (handled in code)
+    always_keep:
+      - "chrome.exe"
+      - "msedge.exe"
+      - "firefox.exe"
+      - "discord.exe"
+      - "explorer.exe"
+    kill_candidates:
+      - "OneDrive.exe"
+      - "SearchHost.exe"
+      - "Widgets.exe"
+    actions:
+      trim_idle_working_sets: true
+
+  idle:
+    trigger_processes: []  # No user input for 10 minutes
+    always_keep: []
+    kill_candidates: []
+    actions: {}
+
+# Global whitelist — never kill these regardless of profile
+global_whitelist:
+  - "explorer.exe"
+  - "csrss.exe"
+  - "winlogon.exe"
+  - "services.exe"
+  - "svchost.exe"
+  - "lsass.exe"
+  - "dwm.exe"
+  - "System"
+  - "smss.exe"
+  - "wininit.exe"
+  - "conhost.exe"
+  - "RuntimeBroker.exe"
+  - "taskhostw.exe"
+  - "sihost.exe"
+  - "fontdrvhost.exe"
+  - "SecurityHealthService.exe"
+
+# Global blacklist — always kill these (known bloatware)
+global_blacklist: []

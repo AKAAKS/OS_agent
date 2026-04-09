@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Local data, logs, and runtime state
+logs/
+data/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets / config overrides
+.env
+.env.*
+*.local.yaml
+config/local.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Keep directory placeholders
+!logs/.gitkeep
+!data/.gitkeep

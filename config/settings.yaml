@@ -1,0 +1,42 @@
+# OS Agent Settings
+
+api:
+  provider: openai
+  api_key: "${OPENAI_API_KEY}"  # Set via environment variable
+  triage_model: gpt-5-mini
+  complex_model: gpt-5
+  confidence_threshold: 0.7  # Below this, escalate to complex model
+  cost_cap_usd: 1.00  # Max API spend per session — stops LLM calls once exceeded
+
+monitoring:
+  poll_interval_seconds: 5
+  poll_interval_battery_seconds: 30  # Slower polling on battery
+  cpu_threshold_percent: 95
+  cpu_sustained_seconds: 120
+  ram_threshold_percent: 85
+  disk_threshold_percent: 90
+  memory_leak_growth_mb: 500
+  memory_leak_window_minutes: 30
+  gpu_threshold_percent: 95
+  cooldown_minutes: 10  # Suppress duplicate anomaly alerts for this long
+  pause_on_battery: false  # If true, fully pause on battery instead of slowing down
+
+decisions:
+  auto_learn_after_n: 3  # Auto-apply after N consistent user choices
+  similarity_threshold: 0.92  # ChromaDB semantic match threshold
+  debounce_seconds: 30
+
+safety:
+  high_risk_actions:
+    - kill_system_process
+    - modify_power_settings
+    - modify_driver
+    - modify_registry
+  auto_approve_risk_levels:
+    - low
+
+logging:
+  level: INFO
+  file: logs/agent.log
+  max_bytes: 10485760  # 10 MB
+  backup_count: 3  # Keep 3 rotated log files
