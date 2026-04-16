@@ -372,6 +372,19 @@ def main():
     _session_start = _time.monotonic()
     _profile_switch_count = 0
 
+    # Handle OS shutdown signals (SIGTERM, SIGBREAK) so Windows doesn't show
+    # an error dialog when the PC shuts down or the scheduled task is stopped.
+    import signal
+
+    def _graceful_shutdown(signum, frame):
+        logger.info(f"Received signal {signum} — shutting down gracefully")
+        shutdown_event.set()
+        observer.stop()
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _graceful_shutdown)
+
     # ---- Profile action execution helper ----
 
     def _execute_profile_actions(actions: dict):
@@ -534,9 +547,11 @@ def main():
     logger.info("Starting observer daemon...")
     try:
         run_observer_loop(observer, process_monitor, agent, notifier=notifier)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
+        pass  # Signal handler already set shutdown_event
+    finally:
         logger.info("Shutting down gracefully...")
-        shutdown_event.set()  # Signal all threads to stop
+        shutdown_event.set()
         observer.stop()
 
         # Wait for threads to finish (up to 5s each)

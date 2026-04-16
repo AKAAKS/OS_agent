@@ -115,6 +115,18 @@ class AgentTools:
         "explorer.exe", "system",
     })
 
+    # User-facing apps that should never be auto-killed — they hold unsaved
+    # state (tabs, documents, sessions) and closing them disrupts the user.
+    _NEVER_KILL_USER_APPS = frozenset({
+        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
+        "opera.exe", "vivaldi.exe",                     # browsers
+        "winword.exe", "excel.exe", "powerpnt.exe",     # Office
+        "onenote.exe", "outlook.exe",
+        "notepad++.exe", "code.exe", "devenv.exe",      # editors/IDEs
+        "pycharm64.exe", "idea64.exe", "webstorm64.exe",
+        "claude.exe",                                    # Claude desktop
+    })
+
     def kill_process(self, pid: int, force: bool = False) -> ActionResult:
         """Kill a process by PID."""
         if pid in self._PROTECTED_PIDS:
@@ -124,6 +136,8 @@ class AgentTools:
             name = proc.name()
             if name.lower() in self._PROTECTED_NAMES:
                 return ActionResult(False, f"Refused to kill system-critical process {name} (PID {pid})")
+            if name.lower() in self._NEVER_KILL_USER_APPS:
+                return ActionResult(False, f"Refused to kill user app {name} (PID {pid}) — has unsaved state")
 
             if force:
                 proc.kill()

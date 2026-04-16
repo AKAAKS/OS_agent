@@ -41,12 +41,23 @@ class ToastNotifier:
     Rate-limited to prevent notification spam.
     """
 
-    APP_ID = "OS Agent"
+    # Use Python's AppUserModelID so winotify can display toasts.
+    # A plain string like "OS Agent" isn't registered with Windows and
+    # causes notifications to be silently dropped.
+    APP_ID = "Python.OS_Agent.SystemOptimizer"
 
     def __init__(self, enabled: bool = True):
         self._enabled = enabled and _AVAILABLE
         self._lock = threading.Lock()
         self._recent: dict[str, float] = {}  # dedup_key -> last_sent timestamp
+
+        # Register the AppUserModelID so Windows routes toasts correctly
+        if self._enabled:
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(self.APP_ID)
+            except Exception:
+                pass  # Non-fatal — toasts may still work via fallback
 
     @property
     def available(self) -> bool:
