@@ -48,7 +48,7 @@ class TestCostCap:
         llm_with_mock._total_output_tokens = 10_000_000
 
         result = llm_with_mock.diagnose_anomaly("test", "context")
-        assert "Cost cap reached" in result.content
+        assert "cost cap reached" in result.content.lower()
         # Should NOT have called the OpenAI API
         llm_with_mock.client.chat.completions.create.assert_not_called()
 

@@ -12,6 +12,7 @@ from typing import Annotated
 from langgraph.graph import StateGraph, START, END
 
 from src.observer.daemon import ObservationEvent, AnomalyType
+from src.agent.audit import ActionAuditLog, ActionRecord
 from src.agent.llm import LLMClient
 from src.agent.tools import AgentTools, ActionResult
 from src.decisions.engine import DecisionEngine, Decision
@@ -51,6 +52,8 @@ class OODAAgent:
         profile_manager: ProfileManager,
         settings: dict,
         memory: SemanticMemory | None = None,
+        dry_run: bool = False,
+        audit_log: ActionAuditLog | None = None,
     ):
         self.llm = llm
         self.tools = tools
@@ -60,6 +63,8 @@ class OODAAgent:
         self.memory = memory
         self._hitl_callback = None
         self._event_log: list[dict] = []
+        self.dry_run = dry_run
+        self.audit_log = audit_log or ActionAuditLog()
 
         self.graph = self._build_graph()
 
@@ -356,9 +361,19 @@ class OODAAgent:
         return "approved" if state.get("hitl_approved") else "denied"
 
     def _act(self, state: dict) -> dict:
-        """Execute the planned action."""
+        """Execute the planned action (or log it under --dry-run), then audit it."""
+        import time as _time
         action = state["planned_action"]
         args = state.get("action_args", {})
+        started = _time.monotonic()
+
+        # Dry-run short-circuits execution — logs the intent without side effects
+        if self.dry_run:
+            msg = f"[dry-run] would execute {action} with {args}"
+            logger.info(msg)
+            state["action_result"] = ActionResult(True, msg, details={"dry_run": True})
+            self._audit_action(state, duration_ms=(_time.monotonic() - started) * 1000)
+            return state
 
         if action == "kill_process":
             pid = args.get("pid")
@@ -393,7 +408,33 @@ class OODAAgent:
         else:
             state["action_result"] = ActionResult(False, f"Unknown action: {action}")
 
+        self._audit_action(state, duration_ms=(_time.monotonic() - started) * 1000)
         return state
+
+    def _audit_action(self, state: dict, duration_ms: float) -> None:
+        """Persist an audit record for the action just executed (or dry-run-planned)."""
+        result: ActionResult = state.get("action_result")
+        event: ObservationEvent | None = state.get("event")
+        if not result:
+            return
+        try:
+            record = ActionRecord(
+                timestamp=datetime.now().isoformat(),
+                action=state.get("planned_action", ""),
+                args=state.get("action_args", {}),
+                dry_run=self.dry_run,
+                success=result.success,
+                message=result.message,
+                risk_level=state.get("risk_level", "unknown"),
+                event_type=event.anomaly_type.value if event else "",
+                event_summary=event.summary if event else "",
+                profile=self.profile_manager.active_profile.value,
+                duration_ms=round(duration_ms, 2),
+                details={k: v for k, v in (result.details or {}).items() if k != "stdout"},
+            )
+            self.audit_log.record(record)
+        except Exception as e:
+            logger.error(f"Audit log write failed: {e}")
 
     def _verify(self, state: dict) -> dict:
         """Verify the action was successful and store outcome in memory."""

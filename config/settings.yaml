@@ -7,6 +7,7 @@ api:
   complex_model: gpt-5
   confidence_threshold: 0.7  # Below this, escalate to complex model
   cost_cap_usd: 1.00  # Max API spend per session — stops LLM calls once exceeded
+  daily_cost_cap_usd: 5.00  # Max API spend per calendar day (persisted across restarts)
 
 monitoring:
   poll_interval_seconds: 5

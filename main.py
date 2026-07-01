@@ -6,13 +6,26 @@ Entry point: starts the observer daemon, agent loop, and UI components.
 import json
 import logging
 import logging.handlers
-import os
 import sys
 import threading
 import time as _time
 from pathlib import Path
 
-import yaml
+# Module-level handles the GUI uses to request a graceful shutdown
+# from a different thread. Set inside main() once the real objects exist.
+_shutdown_event: threading.Event | None = None
+_observer_ref = None
+
+
+def request_shutdown() -> None:
+    """Ask the running agent to shut down. Safe to call from any thread."""
+    if _shutdown_event is not None:
+        _shutdown_event.set()
+    if _observer_ref is not None:
+        try:
+            _observer_ref.stop()
+        except Exception:
+            pass
 
 # Force UTF-8 stdout/stderr to avoid cp1252 encoding errors on Windows
 # (Skip when running under pytest — it manages its own capture)
@@ -48,87 +61,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("os_agent")
 
+# Install crash reporter early so even subsystem-init failures get dumped.
+from src.reliability import install_crash_reporter
+_crash_reporter = install_crash_reporter()
+
 
 def load_config() -> tuple[dict, dict]:
-    """Load settings and profiles from YAML config files."""
-    config_dir = Path("config")
+    """Load and schema-validate settings + profiles. Exits the process if invalid."""
+    from src.config import ConfigValidationError, load_and_validate
 
-    settings_path = config_dir / "settings.yaml"
-    profiles_path = config_dir / "profiles.yaml"
-
-    if not settings_path.exists():
-        print(f"FATAL: Config file not found: {settings_path.resolve()}")
-        print("Create config/settings.yaml with the required configuration.")
+    try:
+        app_config, profiles_config = load_and_validate(
+            settings_path=Path("config/settings.yaml"),
+            profiles_path=Path("config/profiles.yaml"),
+        )
+    except ConfigValidationError as e:
+        print("FATAL: configuration failed validation.\n")
+        print(str(e))
+        print("\nFix the issues above and restart.")
         sys.exit(1)
-    if not profiles_path.exists():
-        print(f"FATAL: Config file not found: {profiles_path.resolve()}")
-        print("Create config/profiles.yaml with the required configuration.")
-        sys.exit(1)
 
-    with open(settings_path) as f:
-        settings = yaml.safe_load(f)
-
-    with open(profiles_path) as f:
-        profiles = yaml.safe_load(f)
-
-    return settings, profiles
-
-
-def validate_config(settings: dict, profiles: dict) -> list[str]:
-    """Validate config files at startup. Returns a list of warnings (empty = OK)."""
-    warnings = []
-
-    # --- settings.yaml ---
-    api = settings.get("api")
-    if not api:
-        warnings.append("settings.yaml: missing 'api' section")
-    else:
-        for key in ("triage_model", "complex_model"):
-            if key not in api:
-                warnings.append(f"settings.yaml: api.{key} is missing")
-        if not api.get("api_key") and not os.environ.get("OPENAI_API_KEY"):
-            warnings.append("settings.yaml: no API key configured and OPENAI_API_KEY env var is empty")
-        cap = api.get("cost_cap_usd")
-        if cap is not None and (not isinstance(cap, (int, float)) or cap <= 0):
-            warnings.append(f"settings.yaml: api.cost_cap_usd must be a positive number, got {cap!r}")
-
-    monitoring = settings.get("monitoring")
-    if not monitoring:
-        warnings.append("settings.yaml: missing 'monitoring' section")
-    else:
-        for key in ("poll_interval_seconds", "cpu_threshold_percent", "ram_threshold_percent"):
-            val = monitoring.get(key)
-            if val is None:
-                warnings.append(f"settings.yaml: monitoring.{key} is missing")
-            elif not isinstance(val, (int, float)):
-                warnings.append(f"settings.yaml: monitoring.{key} must be a number, got {type(val).__name__}")
-
-    safety = settings.get("safety")
-    if not safety:
-        warnings.append("settings.yaml: missing 'safety' section")
-
-    # --- profiles.yaml ---
-    prof_section = profiles.get("profiles")
-    if not prof_section:
-        warnings.append("profiles.yaml: missing 'profiles' section")
-    else:
-        valid_profiles = {"idle", "coding", "gaming", "streaming", "browsing", "media", "comms"}
-        for name, cfg in prof_section.items():
-            if name not in valid_profiles:
-                warnings.append(f"profiles.yaml: unknown profile '{name}' (valid: {valid_profiles})")
-            if not isinstance(cfg, dict):
-                warnings.append(f"profiles.yaml: profile '{name}' must be a dict")
-                continue
-            for list_key in ("trigger_processes", "always_keep", "kill_candidates"):
-                val = cfg.get(list_key)
-                if val is not None and not isinstance(val, list):
-                    warnings.append(f"profiles.yaml: {name}.{list_key} must be a list, got {type(val).__name__}")
-
-    whitelist = profiles.get("global_whitelist")
-    if whitelist is not None and not isinstance(whitelist, list):
-        warnings.append("profiles.yaml: global_whitelist must be a list")
-
-    return warnings
+    # Rest of the codebase consumes plain dicts — return those, keyed by schema shape.
+    return app_config.model_dump(), profiles_config.model_dump()
 
 
 def _has_console() -> bool:
@@ -218,17 +172,29 @@ def run_observer_loop(observer, process_monitor, agent, notifier=None):
     observer.run()
 
 
-def main():
-    logger.info("OS Agent starting...")
+def _parse_args() -> "argparse.Namespace":
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="os_agent",
+        description="Personal Windows 11 System Optimizer (OODA agent loop)",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log planned actions without executing them. Safe mode for validating behavior.",
+    )
+    return p.parse_args()
 
-    # Load and validate configuration
+
+def main():
+    args = _parse_args()
+    logger.info("OS Agent starting...")
+    if args.dry_run:
+        logger.warning("DRY-RUN MODE — no actions will be executed, only audited")
+
+    # Load and validate configuration (exits on schema failure)
     settings, profiles_config = load_config()
-    config_warnings = validate_config(settings, profiles_config)
-    if config_warnings:
-        for w in config_warnings:
-            logger.warning(f"Config: {w}")
-        print(f"\n⚠ {len(config_warnings)} config warning(s) — check logs for details.")
-    logger.info("Configuration loaded")
+    logger.info("Configuration loaded and validated")
 
     # Initialize components
     from src.profiles.manager import ProfileManager
@@ -281,7 +247,10 @@ def main():
     hitl.set_approval_callback(create_hitl_console_callback())
 
     # Agent (with semantic memory wired in)
-    agent = OODAAgent(llm, tools, decision_engine, profile_manager, settings, memory=memory)
+    agent = OODAAgent(
+        llm, tools, decision_engine, profile_manager, settings,
+        memory=memory, dry_run=args.dry_run,
+    )
     agent.set_hitl_callback(create_hitl_console_callback())
 
     # Audio (optional — pycaw may not be available)
@@ -362,6 +331,7 @@ def main():
 ║  Audio:      {'Ready' if audio_monitor and audio_monitor.available else 'Disabled':<32} ║
 ║  Bluetooth:  {'Ready' if bt_monitor else 'Disabled':<32} ║
 ║  Toasts:     {'Ready' if notifier.available else 'Disabled':<32} ║
+║  Dry-run:    {'YES — actions logged only' if args.dry_run else 'No (actions live)':<32} ║
 ║  Log rotate: 10MB x 3 backups{' ' * 16}║
 ╚══════════════════════════════════════════════╝
     """)
@@ -372,6 +342,12 @@ def main():
     _session_start = _time.monotonic()
     _profile_switch_count = 0
 
+    # Expose the shutdown event + observer to module-level so request_shutdown()
+    # (callable from the GUI thread) can trigger a graceful stop.
+    global _shutdown_event, _observer_ref
+    _shutdown_event = shutdown_event
+    _observer_ref = observer
+
     # Handle OS shutdown signals (SIGTERM, SIGBREAK) so Windows doesn't show
     # an error dialog when the PC shuts down or the scheduled task is stopped.
     import signal
@@ -381,9 +357,15 @@ def main():
         shutdown_event.set()
         observer.stop()
 
-    signal.signal(signal.SIGTERM, _graceful_shutdown)
-    if hasattr(signal, "SIGBREAK"):
-        signal.signal(signal.SIGBREAK, _graceful_shutdown)
+    # signal.signal() can only be called from the main thread. When embedded
+    # under the GUI launcher, main() runs on a worker thread — skip silently
+    # in that case; the GUI owns shutdown via app.quit().
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _graceful_shutdown)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, _graceful_shutdown)
+    else:
+        logger.debug("Skipping signal handler install (not on main thread)")
 
     # ---- Profile action execution helper ----
 

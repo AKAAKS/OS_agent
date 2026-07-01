@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
+from src.agent.cost_ledger import DailyCostLedger
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,10 @@ class LLMClient:
         self._total_output_tokens = 0
         self._cost_cap = api_config.get("cost_cap_usd", 1.00)
         self._lock = threading.Lock()  # Protects token counters and cost cap check
+
+        # Persistent daily cost cap — survives restarts
+        daily_cap = api_config.get("daily_cost_cap_usd", 5.00)
+        self._daily_ledger = DailyCostLedger(daily_cap_usd=daily_cap)
 
         # Circuit breaker: stop calling after N consecutive identical errors
         self._consecutive_errors = 0
@@ -143,18 +149,32 @@ Diagnose the issue and suggest a fix. Respond in JSON format:
                     confidence=0.0,
                 )
 
-        # Thread-safe cost cap check
+        # Thread-safe session cost cap check
         with self._lock:
             current_cost = self.get_usage_stats()["estimated_cost_usd"]
             if current_cost >= self._cost_cap:
-                logger.warning(f"Cost cap reached (${current_cost:.4f} >= ${self._cost_cap:.2f}) — skipping LLM call")
+                logger.warning(f"Session cost cap reached (${current_cost:.4f} >= ${self._cost_cap:.2f}) — skipping LLM call")
                 return LLMResponse(
-                    content='{"error": "Cost cap reached"}',
+                    content='{"error": "Session cost cap reached"}',
                     model_used="none",
                     input_tokens=0,
                     output_tokens=0,
                     confidence=0.0,
                 )
+
+        # Persistent daily cost cap — blocks if today's total exceeded
+        if self._daily_ledger.cap_exceeded():
+            today_spend = self._daily_ledger.today_spend()
+            logger.warning(
+                f"Daily cost cap reached (${today_spend:.4f} >= ${self._daily_ledger.daily_cap_usd:.2f}) — skipping LLM call"
+            )
+            return LLMResponse(
+                content='{"error": "Daily cost cap reached"}',
+                model_used="none",
+                input_tokens=0,
+                output_tokens=0,
+                confidence=0.0,
+            )
 
         model = self.complex_model if use_complex else self.triage_model
         logger.info(f"LLM call → {model}")
@@ -187,6 +207,10 @@ Diagnose the issue and suggest a fix. Respond in JSON format:
                 # Reset circuit breaker on success
                 self._consecutive_errors = 0
                 self._last_error_msg = ""
+
+            # Persist this call's cost to the daily ledger (outside the lock — has its own)
+            call_cost = self._estimate_cost(input_tokens, output_tokens, model)
+            self._daily_ledger.add(call_cost)
 
             # Try to extract confidence from the response
             confidence = 0.5
@@ -239,6 +263,16 @@ Diagnose the issue and suggest a fix. Respond in JSON format:
                 confidence=0.0,
             )
 
+    @staticmethod
+    def _estimate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
+        """Approximate USD cost per call. Rates are per 1M tokens."""
+        # Conservative defaults in case of unknown model
+        if "mini" in model.lower():
+            in_rate, out_rate = 0.15, 0.60   # gpt-4o-mini / gpt-5-mini
+        else:
+            in_rate, out_rate = 5.00, 15.00  # gpt-4o / gpt-5 class
+        return (input_tokens * in_rate / 1_000_000) + (output_tokens * out_rate / 1_000_000)
+
     def reset_circuit_breaker(self):
         """Reset the circuit breaker (e.g., after fixing config or API key)."""
         with self._lock:
@@ -246,14 +280,24 @@ Diagnose the issue and suggest a fix. Respond in JSON format:
             self._last_error_msg = ""
         logger.info("LLM circuit breaker reset")
 
+    def get_daily_cost_stats(self) -> dict:
+        """Daily cost ledger snapshot: today's spend, cap, remaining, history."""
+        return {
+            "today_spend_usd": round(self._daily_ledger.today_spend(), 4),
+            "daily_cap_usd": round(self._daily_ledger.daily_cap_usd, 2),
+            "remaining_usd": round(self._daily_ledger.remaining(), 4),
+            "history": {k: round(v, 4) for k, v in self._daily_ledger.history(7).items()},
+        }
+
     def get_usage_stats(self) -> dict:
-        """Get cumulative token usage stats."""
+        """Get cumulative token usage stats (session-scoped, approximate — uses triage rates)."""
+        # Session-scoped figure is a lower-bound since we can't separate triage vs complex
+        # tokens cheaply. The daily ledger (fed per-call with model-aware rates) is authoritative.
         return {
             "total_input_tokens": self._total_input_tokens,
             "total_output_tokens": self._total_output_tokens,
             "estimated_cost_usd": round(
-                (self._total_input_tokens * 0.15 / 1_000_000)
-                + (self._total_output_tokens * 0.60 / 1_000_000),
+                self._estimate_cost(self._total_input_tokens, self._total_output_tokens, self.triage_model),
                 4,
             ),
             "circuit_breaker_tripped": self._consecutive_errors >= self._CIRCUIT_BREAKER_THRESHOLD,
