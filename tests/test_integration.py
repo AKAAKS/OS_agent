@@ -243,6 +243,69 @@ class TestDiskPressureFlow:
         tools.cleanup_temp_files.assert_not_called()
 
 
+class TestMemoryReuse:
+    """Semantic-memory reuse must replay a STRUCTURED action, never a command
+    parsed out of free-text prose."""
+
+    def _agent(self, past_fix, tools, stub_llm, stub_decision_engine, profile_manager, settings, tmp_path):
+        memory = MagicMock()
+        memory.available = True
+        memory.find_similar_fix.return_value = past_fix
+        agent = OODAAgent(
+            llm=stub_llm, tools=tools, decision_engine=stub_decision_engine,
+            profile_manager=profile_manager, settings=settings, memory=memory,
+            audit_log=ActionAuditLog(path=tmp_path / "actions.jsonl"),
+        )
+        agent.set_hitl_callback(lambda req: True)
+        return agent
+
+    def test_replays_structured_kill_with_current_pid(
+        self, stub_llm, stub_decision_engine, profile_manager, settings, tmp_path
+    ):
+        tools = AgentTools()
+        tools.kill_process = MagicMock(return_value=ActionResult(True, "killed"))
+        past_fix = {
+            "similarity": 0.99, "original_anomaly": "cpu 97%",
+            "fix_applied": "killed the offending process",
+            "action": "kill_process", "anomaly_type": "CPU_SPIKE", "timestamp": "",
+        }
+        agent = self._agent(past_fix, tools, stub_llm, stub_decision_engine, profile_manager, settings, tmp_path)
+        event = _event(AnomalyType.CPU_SPIKE, "cpu 98%", details={
+            "top_processes": [{"pid": 4321, "name": "hog.exe", "cpu_percent": 98, "memory_mb": 100}],
+        })
+
+        result = agent.process_event(event)
+
+        assert result["planned_action"] == "kill_process"
+        assert result["action_args"]["pid"] == 4321  # current PID, not a stale stored one
+        tools.kill_process.assert_called_once_with(4321)
+        stub_llm.diagnose_anomaly.assert_not_called()  # memory hit skips the LLM
+
+    def test_unsafe_cached_action_is_advisory_not_fabricated(
+        self, stub_llm, stub_decision_engine, profile_manager, settings, tmp_path
+    ):
+        # A cached run_command can't be safely re-resolved → the agent must NOT
+        # fabricate a command; it becomes advisory (skip).
+        tools = AgentTools()
+        tools.run_command = MagicMock(return_value=ActionResult(True, "ran"))
+        tools.kill_process = MagicMock(return_value=ActionResult(True, "killed"))
+        past_fix = {
+            "similarity": 0.99, "original_anomaly": "cpu 97%",
+            "fix_applied": "run a powershell script to clear the cache",
+            "action": "run_command", "anomaly_type": "CPU_SPIKE", "timestamp": "",
+        }
+        agent = self._agent(past_fix, tools, stub_llm, stub_decision_engine, profile_manager, settings, tmp_path)
+        event = _event(AnomalyType.CPU_SPIKE, "cpu 98%", details={
+            "top_processes": [{"pid": 4321, "name": "hog.exe", "cpu_percent": 98, "memory_mb": 100}],
+        })
+
+        result = agent.process_event(event)
+
+        assert result["planned_action"] == "skip"
+        tools.run_command.assert_not_called()
+        tools.kill_process.assert_not_called()
+
+
 class TestThermalAndGpuFlow:
 
     def test_thermal_throttle_is_advisory_only(self, agent_factory):

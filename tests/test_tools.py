@@ -10,10 +10,18 @@ class TestCommandSanitization:
 
     def test_allowed_executables_pass(self):
         assert _sanitize_command("tasklist /v") is not None
-        assert _sanitize_command("net stop spooler") is not None
         assert _sanitize_command("systeminfo") is not None
         assert _sanitize_command("ipconfig /all") is not None
+        assert _sanitize_command("netstat -an") is not None
         assert _sanitize_command("nvidia-smi") is not None
+
+    def test_mutating_admin_tools_blocked(self):
+        # State-mutating admin tools are no longer allowlisted for run_command:
+        # kills go through kill_process, service control through restart_service.
+        assert _sanitize_command("net stop spooler") is None
+        assert _sanitize_command("sc delete SomeService") is None
+        assert _sanitize_command("taskkill /F /PID 1234") is None
+        assert _sanitize_command('wmic process call create "calc.exe"') is None
 
     def test_shell_interpreters_blocked(self):
         # Raw interpreters are no longer allowlisted: allowlisting a
@@ -112,3 +120,27 @@ class TestKillProcess:
         assert "system-critical" in result.message.lower()
         mock_proc.terminate.assert_not_called()
         mock_proc.kill.assert_not_called()
+
+
+class TestRestorePoint:
+    """A restore point must be captured before the registry-mutating
+    defer_windows_update."""
+
+    def test_defer_update_creates_restore_point_first(self, mocker):
+        import subprocess as sp
+
+        calls = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(" ".join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd))
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        mocker.patch("subprocess.run", side_effect=fake_run)
+
+        AgentTools().defer_windows_update()
+
+        cp_idx = next((i for i, c in enumerate(calls) if "Checkpoint-Computer" in c), None)
+        wu_idx = next((i for i, c in enumerate(calls) if "WindowsUpdate" in c), None)
+        assert cp_idx is not None, "restore point was not attempted"
+        assert wu_idx is not None, "registry write did not run"
+        assert cp_idx < wu_idx, "restore point must precede the registry write"

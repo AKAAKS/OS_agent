@@ -27,11 +27,12 @@ _ALLOWED_EXECUTABLES = frozenset({
     # would sail through a substring denylist). Boot/partition tools (bcdedit,
     # diskpart) are excluded for their unrecoverable blast radius. Structured
     # actions (kill_process, restart_service, set_power_plan) cover real needs.
-    "net", "net.exe",
-    "sc", "sc.exe",
+    # State-mutating admin tools (sc, net, wmic, taskkill) are also excluded:
+    # process kills go through kill_process, service control through
+    # restart_service, and there is no autonomous need to create/delete
+    # services or spawn processes from a free-text command. What remains is a
+    # read-only diagnostics set.
     "tasklist", "tasklist.exe",
-    "taskkill", "taskkill.exe",
-    "wmic", "wmic.exe",
     "systeminfo", "systeminfo.exe",
     "ipconfig", "ipconfig.exe",
     "netstat", "netstat.exe",
@@ -209,8 +210,39 @@ class AgentTools:
         except subprocess.TimeoutExpired:
             return ActionResult(False, f"Timeout restarting service '{service_name}'")
 
+    def create_restore_point(self, description: str = "OS Agent — pre-action checkpoint") -> ActionResult:
+        """Best-effort System Restore checkpoint before a hard-to-reverse action.
+
+        Requires admin + System Protection enabled, and Windows rate-limits
+        restore points to one per 24h by default, so this often no-ops. Failures
+        are non-fatal — the caller decides whether to proceed. Runs powershell
+        directly (a tool-internal privileged op), not via the run_command
+        allowlist.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "powershell", "-NonInteractive", "-Command",
+                    f"Checkpoint-Computer -Description '{description}' "
+                    "-RestorePointType MODIFY_SETTINGS",
+                ],
+                capture_output=True, text=True, timeout=90, creationflags=_SUBPROCESS_FLAGS,
+            )
+            if result.returncode == 0:
+                logger.info(f"Created System Restore point: {description}")
+                return ActionResult(True, f"Created restore point '{description}'")
+            msg = (result.stderr or result.stdout or "unknown error").strip()
+            logger.warning(f"Restore point not created: {msg[:160]}")
+            return ActionResult(False, f"Restore point not created: {msg[:160]}")
+        except subprocess.TimeoutExpired:
+            return ActionResult(False, "Restore point creation timed out")
+        except Exception as e:
+            return ActionResult(False, f"Restore point error: {e}")
+
     def defer_windows_update(self) -> ActionResult:
         """Pause Windows Update for 7 days."""
+        # Registry mutation — capture a restore point first (best-effort).
+        self.create_restore_point("OS Agent — before deferring Windows Update")
         try:
             result = subprocess.run(
                 [

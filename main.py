@@ -363,22 +363,57 @@ def main():
 
     # ---- Profile action execution helper ----
 
+    _profile_hitl = create_hitl_console_callback()
+
+    def _profile_action_approved(action_name: str, risk: str, reason: str) -> bool:
+        """Gate a privileged profile action through the HITL callback.
+
+        Profile switches fire automatically (e.g. launching a game), so any
+        privileged action they trigger must go through the same approval gate
+        the OODA agent uses — never silently.
+        """
+        from datetime import datetime as _dt
+        from src.safety.hitl import HITLRequest, RiskLevel
+        try:
+            request = HITLRequest(
+                action=action_name,
+                target="(profile action)",
+                risk_level=RiskLevel(risk),
+                reason=reason,
+                timestamp=_dt.now(),
+            )
+            return _profile_hitl(request)
+        except Exception as e:
+            logger.error(f"Profile HITL gate failed for {action_name}: {e} — denying")
+            return False
+
     def _execute_profile_actions(actions: dict):
-        """Execute actions defined in profiles.yaml for the active profile."""
+        """Execute actions defined in profiles.yaml for the active profile.
+
+        Privileged actions (registry changes) go through the HITL gate. The old
+        'defer_defender_scan' action — which auto-disabled Windows Defender
+        real-time protection — has been removed as an unacceptable silent
+        security downgrade.
+        """
         for action_name, action_value in actions.items():
             try:
                 if action_name == "defer_windows_update" and action_value:
+                    if not _profile_action_approved(
+                        "defer_windows_update", "medium",
+                        "Active profile requests pausing Windows Update for 7 days",
+                    ):
+                        logger.info("Profile action defer_windows_update denied by HITL gate")
+                        continue
                     result = tools.defer_windows_update()
                     logger.info(f"Profile action defer_windows_update: {result.message}")
                 elif action_name == "trim_idle_working_sets" and action_value:
                     result = tools.trim_working_sets()
                     logger.info(f"Profile action trim_idle_working_sets: {result.message}")
                 elif action_name == "defer_defender_scan" and action_value:
-                    # Pause real-time scanning (requires admin — will fail gracefully)
-                    result = tools.run_command(
-                        'powershell -Command "Set-MpPreference -DisableRealtimeMonitoring $true"'
+                    logger.warning(
+                        "Profile action 'defer_defender_scan' is disabled — auto-disabling "
+                        "Windows Defender real-time protection is not permitted"
                     )
-                    logger.info(f"Profile action defer_defender_scan: {result.message}")
                 else:
                     logger.debug(f"Skipping unknown/disabled profile action: {action_name}")
             except Exception as e:

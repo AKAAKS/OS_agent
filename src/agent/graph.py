@@ -194,27 +194,36 @@ class OODAAgent:
                 logger.warning(f"Semantic memory query failed: {e}")
                 past_fix = None
             if past_fix:
-                logger.info(f"Memory hit (similarity={past_fix['similarity']}): reusing fix '{past_fix['fix_applied']}'")
+                logger.info(f"Memory hit (similarity={past_fix['similarity']}): reusing action '{past_fix.get('action') or past_fix['fix_applied']}'")
                 state["diagnosis"] = {
                     "root_cause": f"Similar to past event: {past_fix['original_anomaly']}",
                     "fix": past_fix["fix_applied"],
                 }
-                fix = past_fix["fix_applied"]
-                if "kill" in fix.lower():
-                    state["planned_action"] = "kill_process"
-                elif "restart" in fix.lower():
-                    state["planned_action"] = "restart_service"
-                elif "priority" in fix.lower():
-                    state["planned_action"] = "set_priority"
+                # Replay the STRUCTURED action that succeeded before — never parse
+                # the free-text fix into a command. Only actions whose args can be
+                # safely re-resolved from the *current* event are auto-replayed;
+                # anything else becomes advisory (skip), so a cached fix can never
+                # fabricate a run_command or restart_service.
+                cached_action = past_fix.get("action", "")
+                top_proc = self._extract_top_process(event)
+                if cached_action in ("kill_process", "set_priority") and top_proc and top_proc.get("pid"):
+                    state["planned_action"] = cached_action
+                    state["action_args"] = (
+                        {"pid": top_proc["pid"]}
+                        if cached_action == "kill_process"
+                        else {"pid": top_proc["pid"], "priority": "low"}
+                    )
+                    # Risk reflects the action itself, not a blanket "low" — a
+                    # cached fix is replayed without re-diagnosis.
+                    state["risk_level"] = HITLGate.RISK_MAP.get(
+                        cached_action, RiskLevel.MEDIUM
+                    ).value
                 else:
-                    state["planned_action"] = "run_command"
-                state["action_args"] = {"command": fix}
-                # A cached fix is replayed WITHOUT re-diagnosis, so its risk must
-                # reflect the action itself — never a blanket "low" that would let
-                # a consequential action silently auto-approve.
-                state["risk_level"] = HITLGate.RISK_MAP.get(
-                    state["planned_action"], RiskLevel.MEDIUM
-                ).value
+                    state["planned_action"] = "skip"
+                    logger.info(
+                        f"Memory hit but cached action '{cached_action}' is not safely "
+                        "replayable without re-diagnosis — advisory only"
+                    )
                 return state
 
         # For CPU/RAM anomalies, try the LLM

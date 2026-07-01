@@ -128,6 +128,10 @@ class SemanticMemory:
                         "similarity": round(similarity, 3),
                         "original_anomaly": documents[0][0] if documents and documents[0] else "",
                         "fix_applied": metadata.get("fix_applied", ""),
+                        # Structured action that succeeded last time (stored by
+                        # the Verify stage). Preferred over parsing fix_applied
+                        # prose so replay never fabricates a shell command.
+                        "action": metadata.get("action", ""),
                         "anomaly_type": metadata.get("anomaly_type", ""),
                         "timestamp": metadata.get("timestamp", ""),
                     }
