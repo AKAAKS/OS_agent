@@ -29,7 +29,12 @@ decisions:
 
 safety:
   high_risk_actions:
-    - kill_system_process
+    # Action names as emitted by the OODA agent. Membership here forces the HITL
+    # approval callback regardless of the upstream risk_level (which can be wrong
+    # or forced low by the semantic-memory reuse path).
+    - kill_process
+    - restart_service
+    - run_command
     - modify_power_settings
     - modify_driver
     - modify_registry

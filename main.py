@@ -205,7 +205,6 @@ def main():
     from src.agent.tools import AgentTools
     from src.agent.graph import OODAAgent
     from src.memory.store import SemanticMemory
-    from src.safety.hitl import HITLGate
     from src.audio.monitor import AudioMonitor
     from src.audio.suggestions import AudioSuggestionEngine
     from src.bluetooth.monitor import BluetoothMonitor
@@ -240,11 +239,6 @@ def main():
         logger.info("Behavioral learner initialized")
     except Exception as e:
         logger.error(f"Behavioral learner failed to init: {e} — continuing without it")
-
-    hitl = HITLGate(settings)
-
-    # Setup HITL console callback
-    hitl.set_approval_callback(create_hitl_console_callback())
 
     # Agent (with semantic memory wired in)
     agent = OODAAgent(

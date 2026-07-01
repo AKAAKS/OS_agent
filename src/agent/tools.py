@@ -20,9 +20,13 @@ logger = logging.getLogger(__name__)
 # Allowlisted executables that run_command may invoke.
 # Anything not on this list is blocked before reaching the shell.
 _ALLOWED_EXECUTABLES = frozenset({
-    # Windows built-ins / utilities
-    "powershell", "powershell.exe",
-    "cmd", "cmd.exe",
+    # Windows built-ins / utilities.
+    # NOTE: raw shell interpreters (powershell.exe, cmd.exe) are intentionally
+    # NOT allowlisted — allowlisting a Turing-complete interpreter defeats the
+    # allowlist entirely (e.g. `powershell -Command "Remove-Item -Recurse ..."`
+    # would sail through a substring denylist). Boot/partition tools (bcdedit,
+    # diskpart) are excluded for their unrecoverable blast radius. Structured
+    # actions (kill_process, restart_service, set_power_plan) cover real needs.
     "net", "net.exe",
     "sc", "sc.exe",
     "tasklist", "tasklist.exe",
@@ -34,8 +38,6 @@ _ALLOWED_EXECUTABLES = frozenset({
     "sfc", "sfc.exe",
     "dism", "dism.exe",
     "chkdsk", "chkdsk.exe",
-    "diskpart", "diskpart.exe",
-    "bcdedit", "bcdedit.exe",
     # Power management
     "powercfg", "powercfg.exe",
     # Common diagnostic tools

