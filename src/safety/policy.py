@@ -29,8 +29,8 @@ RISK_MAP: dict[str, RiskLevel] = {
 def build_approval_gate(settings: dict) -> ApprovalGate:
     """Map settings.yaml's `safety:` section onto a kernel ApprovalGate.
 
-    Unknown actions default to HIGH (stricter than the old HITLGate's
-    MEDIUM): anything we haven't classified must face a human. Invalid
+    Unknown actions default to HIGH (stricter than the previous default
+    of MEDIUM): anything we haven't classified must face a human. Invalid
     risk-level strings in config raise ValueError — fail fast at startup,
     not silently at approval time.
     """
