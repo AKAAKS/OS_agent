@@ -5,13 +5,14 @@ All destructive actions require HITL approval before execution.
 
 import logging
 import os
-import re
 import shlex
 import signal
 import subprocess
 import time
 
 import psutil
+
+from agentkernel.sanitize import CommandSanitizer
 
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
@@ -48,56 +49,16 @@ _ALLOWED_EXECUTABLES = frozenset({
     "nslookup", "nslookup.exe",
 })
 
-# Patterns that should never appear in a command (chain operators, redirects to
-# sensitive paths, download cradles, etc.)
-_DANGEROUS_PATTERNS = [
-    re.compile(r"[;&|]{2,}"),           # chained commands via && || ;;
-    re.compile(r"\|"),                   # pipe operator
-    re.compile(r"[><]"),                 # redirects
-    re.compile(r"`"),                    # backtick subshell
-    re.compile(r"\$\("),                 # $() subshell
-    re.compile(r"Invoke-WebRequest", re.IGNORECASE),
-    re.compile(r"Invoke-Expression", re.IGNORECASE),
-    re.compile(r"IEX\s*\(", re.IGNORECASE),
-    re.compile(r"Start-Process", re.IGNORECASE),
-    re.compile(r"DownloadString", re.IGNORECASE),
-    re.compile(r"DownloadFile", re.IGNORECASE),
-    re.compile(r"rm\s+-rf", re.IGNORECASE),
-    re.compile(r"format\s+[a-z]:", re.IGNORECASE),
-    re.compile(r"del\s+/[sfq]", re.IGNORECASE),
-]
+_SANITIZER = CommandSanitizer(_ALLOWED_EXECUTABLES)
 
 
 def _sanitize_command(command: str) -> str | None:
     """Validate a command string before execution.
 
+    Kernel sanitizer bound to this module's read-only diagnostics allowlist.
     Returns the command unchanged if it passes all checks, or None if blocked.
     """
-    stripped = command.strip()
-    if not stripped:
-        return None
-
-    # Check for dangerous shell patterns
-    for pattern in _DANGEROUS_PATTERNS:
-        if pattern.search(stripped):
-            logger.warning(f"Command blocked (dangerous pattern '{pattern.pattern}'): {stripped[:80]}")
-            return None
-
-    # Extract the executable (first token) and verify it's allowlisted
-    try:
-        tokens = shlex.split(stripped, posix=False)
-    except ValueError:
-        tokens = stripped.split()
-
-    if not tokens:
-        return None
-
-    exe = os.path.basename(tokens[0]).lower()
-    if exe not in _ALLOWED_EXECUTABLES:
-        logger.warning(f"Command blocked (executable not allowlisted '{exe}'): {stripped[:80]}")
-        return None
-
-    return stripped
+    return _SANITIZER.sanitize(command)
 
 
 class ActionResult:
