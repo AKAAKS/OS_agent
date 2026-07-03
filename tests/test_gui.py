@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from src.agent.audit import ActionAuditLog, ActionRecord  # noqa: E402
+from agentkernel.audit import ActionAuditLog, ActionRecord  # noqa: E402
 from src.agent.cost_ledger import DailyCostLedger  # noqa: E402
 from src.gui.tray import DetailsWindow, _make_icon  # noqa: E402
 

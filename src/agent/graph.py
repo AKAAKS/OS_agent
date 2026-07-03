@@ -12,7 +12,7 @@ from typing import Annotated
 from langgraph.graph import StateGraph, START, END
 
 from src.observer.daemon import ObservationEvent, AnomalyType
-from src.agent.audit import ActionAuditLog, ActionRecord
+from agentkernel.audit import ActionAuditLog, ActionRecord
 from src.agent.llm import LLMClient
 from src.agent.tools import AgentTools, ActionResult
 from src.decisions.engine import DecisionEngine, Decision

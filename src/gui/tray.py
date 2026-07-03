@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 
-from src.agent.audit import ActionAuditLog
+from agentkernel.audit import ActionAuditLog
 from src.agent.cost_ledger import DailyCostLedger
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.agent.audit import ActionAuditLog
+from agentkernel.audit import ActionAuditLog
 from src.agent.graph import OODAAgent
 from src.agent.llm import LLMResponse
 from src.agent.tools import ActionResult, AgentTools

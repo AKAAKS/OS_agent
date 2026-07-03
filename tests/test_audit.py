@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.agent.audit import ActionAuditLog, ActionRecord
+from agentkernel.audit import ActionAuditLog, ActionRecord
 from src.agent.graph import OODAAgent
 from src.agent.tools import ActionResult
 from src.observer.daemon import AnomalyType, ObservationEvent
