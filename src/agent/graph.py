@@ -18,14 +18,10 @@ from src.agent.tools import AgentTools, ActionResult
 from src.decisions.engine import DecisionEngine, Decision
 from agentkernel.memory import FixMemory
 from src.profiles.manager import ProfileManager
-from src.safety.hitl import HITLGate, HITLRequest, RiskLevel
+from agentkernel.risk import RiskLevel, parse_risk
+from src.safety.policy import RISK_MAP, build_approval_gate
 
 logger = logging.getLogger(__name__)
-
-# Severity ordering used to take the MORE severe of an upstream-assigned risk
-# and an action's canonical risk — so a mislabelled/forced-low risk can never
-# downgrade a consequential action below what its action type warrants.
-_RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
 @dataclass
@@ -67,7 +63,7 @@ class OODAAgent:
         self.profile_manager = profile_manager
         self.settings = settings
         self.memory = memory
-        self._hitl_callback = None
+        self.gate = build_approval_gate(settings)
         self._event_log: list[dict] = []
         self.dry_run = dry_run
         self.audit_log = audit_log or ActionAuditLog()
@@ -76,9 +72,9 @@ class OODAAgent:
 
     def set_hitl_callback(self, callback):
         """Set a callback for human-in-the-loop approval.
-        callback(state: AgentState) -> bool (True = approved)
+        callback(request: ApprovalRequest) -> bool (True = approved)
         """
-        self._hitl_callback = callback
+        self.gate.set_approval_callback(callback)
 
     def _build_graph(self) -> StateGraph:
         builder = StateGraph(dict)
@@ -215,7 +211,7 @@ class OODAAgent:
                     )
                     # Risk reflects the action itself, not a blanket "low" — a
                     # cached fix is replayed without re-diagnosis.
-                    state["risk_level"] = HITLGate.RISK_MAP.get(
+                    state["risk_level"] = RISK_MAP.get(
                         cached_action, RiskLevel.MEDIUM
                     ).value
                 else:
@@ -341,58 +337,22 @@ class OODAAgent:
         return "act"
 
     def _hitl_gate(self, state: dict) -> dict:
-        """Decide whether the planned action needs human approval.
+        """Route the planned action through the fail-closed approval gate.
 
-        Inherently high-risk actions (``settings.safety.high_risk_actions``)
-        ALWAYS go through the approval callback. The ``risk_level`` assigned
-        upstream can be wrong or forced low (e.g. the semantic-memory reuse
-        path), so it must never be able to silently auto-approve a consequential
-        action via the ``auto_approve_risk_levels`` short-circuit.
+        The gate enforces the two safety properties this node used to
+        implement inline: actions in settings.safety.high_risk_actions
+        always face the approval callback (an upstream risk label can never
+        silently auto-approve them), and no/raising callback means deny.
         """
-        high_risk_actions = self.settings.get("safety", {}).get("high_risk_actions", [])
-        auto_approve = self.settings.get("safety", {}).get("auto_approve_risk_levels", ["low"])
-        action = state.get("planned_action", "")
-        is_high_risk_action = action in high_risk_actions
-
-        # Fast path: a non-consequential action at an auto-approvable risk level.
-        if not is_high_risk_action and state.get("risk_level") in auto_approve:
-            state["hitl_approved"] = True
-            return state
-
-        # Otherwise the action must pass the approval callback. For high-risk
-        # actions, take the MORE severe of the upstream risk and the action's
-        # canonical risk so a headless policy can't be fooled by a forced-low
-        # value (but an upstream "high" is never downgraded).
-        state["needs_hitl"] = True
-        try:
-            upstream = RiskLevel(state.get("risk_level", "medium"))
-        except ValueError:
-            upstream = RiskLevel.MEDIUM
-
-        if is_high_risk_action:
-            canonical = HITLGate.RISK_MAP.get(action, RiskLevel.HIGH)
-            risk = canonical if _RISK_ORDER[canonical.value] >= _RISK_ORDER[upstream.value] else upstream
-            state["risk_level"] = risk.value
-        else:
-            risk = upstream
-
-        if self._hitl_callback:
-            request = HITLRequest(
-                action=action or "unknown",
-                target=str(state.get("action_args", {})),
-                risk_level=risk,
-                reason=state.get("diagnosis", {}).get("root_cause", ""),
-                timestamp=datetime.now(),
-            )
-            try:
-                state["hitl_approved"] = self._hitl_callback(request)
-            except Exception as e:
-                logger.error(f"HITL callback failed: {e} — denying action")
-                state["hitl_approved"] = False
-        else:
-            logger.warning("HITL required but no callback set — denying action")
-            state["hitl_approved"] = False
-
+        decision = self.gate.evaluate(
+            action=state.get("planned_action", ""),
+            target=str(state.get("action_args", {})),
+            reason=state.get("diagnosis", {}).get("root_cause", ""),
+            upstream_risk=parse_risk(state.get("risk_level", "medium")),
+        )
+        state["needs_hitl"] = not decision.auto
+        state["hitl_approved"] = decision.approved
+        state["risk_level"] = decision.risk.value
         return state
 
     def _hitl_approved(self, state: dict) -> str:
