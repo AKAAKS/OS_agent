@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from agentkernel.audit import ActionAuditLog
-from src.agent.cost_ledger import DailyCostLedger
+from agentkernel.costs import DailyCostLedger
 
 logger = logging.getLogger(__name__)
 

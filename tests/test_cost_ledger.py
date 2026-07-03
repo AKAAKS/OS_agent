@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.agent.cost_ledger import DailyCostLedger
+from agentkernel.costs import DailyCostLedger
 
 
 @pytest.fixture
