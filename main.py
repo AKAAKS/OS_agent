@@ -375,9 +375,10 @@ def main():
         the OODA agent uses — never silently.
         """
         from datetime import datetime as _dt
-        from src.safety.hitl import HITLRequest, RiskLevel
+        from agentkernel.gate import ApprovalRequest
+        from agentkernel.risk import RiskLevel
         try:
-            request = HITLRequest(
+            request = ApprovalRequest(
                 action=action_name,
                 target="(profile action)",
                 risk_level=RiskLevel(risk),
