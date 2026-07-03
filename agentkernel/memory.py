@@ -1,6 +1,8 @@
-"""
-Semantic memory — stores past anomaly events and their fixes in ChromaDB.
-Enables fix reuse when similar issues recur.
+"""Semantic fix memory — stores past anomaly events and their fixes in
+ChromaDB so similar future anomalies can reuse a structured action that
+already succeeded, instead of re-diagnosing (or worse, parsing prose into
+a command). chromadb is an optional dependency: without it the store is
+inert (`available` is False) and all operations are safe no-ops.
 """
 
 import logging
@@ -10,13 +12,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-class SemanticMemory:
+class FixMemory:
     """Vector store for past anomaly/fix pairs using ChromaDB."""
 
-    def __init__(self, settings: dict, db_path: str = "data/chromadb"):
-        self.similarity_threshold = settings.get("decisions", {}).get(
-            "similarity_threshold", 0.78
-        )
+    def __init__(self, similarity_threshold: float = 0.78, db_path: str = "data/chromadb"):
+        self.similarity_threshold = similarity_threshold
         self.db_path = db_path
         self._available = False
         self._collection = None

@@ -204,7 +204,7 @@ def main():
     from src.agent.llm import LLMClient
     from src.agent.tools import AgentTools
     from src.agent.graph import OODAAgent
-    from src.memory.store import SemanticMemory
+    from agentkernel.memory import FixMemory
     from src.audio.monitor import AudioMonitor
     from src.audio.suggestions import AudioSuggestionEngine
     from src.bluetooth.monitor import BluetoothMonitor
@@ -228,7 +228,9 @@ def main():
     # Components that may fail independently
     memory = None
     try:
-        memory = SemanticMemory(settings)
+        memory = FixMemory(
+            similarity_threshold=settings.get("decisions", {}).get("similarity_threshold", 0.78)
+        )
     except Exception as e:
         logger.error(f"Semantic memory failed to init: {e} — continuing without it")
 

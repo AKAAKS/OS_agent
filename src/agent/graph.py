@@ -16,7 +16,7 @@ from agentkernel.audit import ActionAuditLog, ActionRecord
 from src.agent.llm import LLMClient
 from src.agent.tools import AgentTools, ActionResult
 from src.decisions.engine import DecisionEngine, Decision
-from src.memory.store import SemanticMemory
+from agentkernel.memory import FixMemory
 from src.profiles.manager import ProfileManager
 from src.safety.hitl import HITLGate, HITLRequest, RiskLevel
 
@@ -57,7 +57,7 @@ class OODAAgent:
         decision_engine: DecisionEngine,
         profile_manager: ProfileManager,
         settings: dict,
-        memory: SemanticMemory | None = None,
+        memory: FixMemory | None = None,
         dry_run: bool = False,
         audit_log: ActionAuditLog | None = None,
     ):
