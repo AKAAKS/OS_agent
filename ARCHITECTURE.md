@@ -179,3 +179,20 @@ Each crash is dumped as a JSON file containing:
 `KeyboardInterrupt` is explicitly excluded — clean Ctrl-C is not a crash.
 
 Zero network egress. Retention: 50 dumps (older ones pruned).
+
+## agentkernel (extracted 2026-07)
+
+The trust/autonomy substrate lives in the top-level `agentkernel/` package:
+risk model, fail-closed ApprovalGate, CommandSanitizer, audit log, cost
+ledger, and semantic fix memory. It has **no dependency on `src/` or any
+platform library** (AST-enforced by `tests/test_kernel_boundary.py`), so it
+can be reused by other agents (e.g. the personal assistant) or extracted to
+its own repo without change.
+
+The OS agent binds its domain policy to the kernel in two places:
+
+- `src/safety/policy.py` — canonical `RISK_MAP` for every emitted action +
+  `build_approval_gate(settings)` mapping `settings.yaml`'s `safety:`
+  section onto the kernel gate.
+- `src/agent/tools.py` — the read-only diagnostics `_ALLOWED_EXECUTABLES`
+  allowlist bound to the kernel's `CommandSanitizer`.
