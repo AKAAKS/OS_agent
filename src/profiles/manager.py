@@ -7,7 +7,7 @@ import ctypes
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import Enum
 
 import psutil
@@ -58,7 +58,6 @@ class ProfileManager:
         self.global_blacklist = {p.lower() for p in global_blacklist}
         self._active_profile = ProfileType.IDLE
         self._trigger_app = "No activity detected"
-        self._last_input_time = datetime.now()
         self._idle_timeout = timedelta(minutes=10)
 
         # Debounce state — prevents rapid profile switching on alt-tab
@@ -83,15 +82,19 @@ class ProfileManager:
                 actions=cfg.get("actions", {}),
             )
 
-        # Ensure idle profile exists
-        if ProfileType.IDLE not in self.profiles:
-            self.profiles[ProfileType.IDLE] = ProfileConfig(
-                name=ProfileType.IDLE,
-                trigger_processes=[],
-                always_keep=[],
-                kill_candidates=[],
-                actions={},
-            )
+        # Backfill an empty config for every ProfileType the yaml doesn't
+        # define. Detection can produce profiles (browsing/media/comms) that
+        # users rarely configure — without this, get_active_config() raises
+        # KeyError for them.
+        for ptype in ProfileType:
+            if ptype not in self.profiles:
+                self.profiles[ptype] = ProfileConfig(
+                    name=ptype,
+                    trigger_processes=[],
+                    always_keep=[],
+                    kill_candidates=[],
+                    actions={},
+                )
 
     # Hardcoded process indicators — used when profiles.yaml doesn't define trigger_processes
     _INDICATORS: dict[str, dict[str, str]] = {
@@ -153,14 +156,42 @@ class ProfileManager:
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             return None
 
-    def detect_profile(self, exclude_pids: set[int] | None = None) -> ProfileType:
-        """Detect active profile using foreground window + background process scan.
+    class _LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
-        Strategy:
-        1. Check foreground window — the app the user is actually using
-        2. For background-only profiles (Gaming, Streaming), scan all processes
-        3. Fall back to Idle if nothing matches
+    def _get_input_idle_seconds(self) -> float | None:
+        """Seconds since the last keyboard/mouse input (GetLastInputInfo).
+
+        Returns None if the probe fails — callers must treat None as
+        "user may be active", never as idle.
         """
+        try:
+            info = self._LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(self._LASTINPUTINFO)
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            ticks = ctypes.windll.kernel32.GetTickCount()
+            # GetTickCount wraps at ~49.7 days — mask keeps the delta correct
+            return ((ticks - info.dwTime) & 0xFFFFFFFF) / 1000.0
+        except Exception:
+            return None
+
+    def detect_profile(self) -> ProfileType:
+        """Detect the active profile.
+
+        Strategy — profiles change only on positive evidence:
+        1. No keyboard/mouse input for the idle timeout → Idle
+        2. Foreground window matches a mapped app → that profile
+        3. Background scan for background-only profiles (Gaming, Streaming)
+        4. No signal (unknown app, screensaver, lock screen, transient
+           window) → hold the current profile
+        """
+        idle_secs = self._get_input_idle_seconds()
+        if idle_secs is not None and idle_secs >= self._idle_timeout.total_seconds():
+            return self._debounced_switch(
+                ProfileType.IDLE, f"No input for {int(idle_secs // 60)} min"
+            )
+
         fg_name = self._get_foreground_process_name()
 
         # Build all indicators into a flat lookup: exe_name -> (ProfileType, display_label)
@@ -185,10 +216,6 @@ class ProfileManager:
 
         if fg_name and fg_name in fg_lookup:
             detected_profile, detected_trigger = fg_lookup[fg_name]
-        elif fg_name is None and self._active_profile != ProfileType.IDLE:
-            # Foreground window unavailable (tooltip, notification, lock screen, etc.)
-            # Treat as "no change" — don't let a transient None reading pull us to idle
-            return self._active_profile
 
         # 2. Background-only profiles — scan running processes
         if detected_profile is None:
@@ -221,10 +248,13 @@ class ProfileManager:
                     detected_trigger = next(iter(matches.values()))
                     break
 
-        # 3. Default to idle
+        # 3. No positive signal — the foreground app is unmapped (or
+        # unavailable) and no background profile matched. Hold the current
+        # profile: an unknown window is not evidence the user went idle;
+        # real idleness is detected by input, in step 1.
         if detected_profile is None:
-            detected_profile = ProfileType.IDLE
-            detected_trigger = "No activity detected"
+            detected_profile = self._active_profile
+            detected_trigger = self._trigger_app
 
         # Apply debounce — only switch after the new profile is stable
         return self._debounced_switch(detected_profile, detected_trigger)

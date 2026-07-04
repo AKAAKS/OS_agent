@@ -399,6 +399,9 @@ class OODAAgent:
             cmd = args.get("command", "")
             if cmd:
                 state["action_result"] = self.tools.run_command(cmd)
+            else:
+                logger.warning("run_command requested but no command in action_args")
+                state["action_result"] = ActionResult(False, "No command provided")
         elif action == "cleanup_temp_files":
             state["action_result"] = self.tools.cleanup_temp_files()
         elif action == "find_large_files":

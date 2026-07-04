@@ -77,10 +77,66 @@ class TestProfileDetection:
 
     @patch.object(ProfileManager, "_get_foreground_process_name", return_value="notepad.exe")
     @patch("psutil.process_iter", return_value=[])
-    def test_unknown_foreground_falls_to_idle(self, mock_procs, mock_fg, profile_manager):
-        """An unrecognized foreground app should fall back to idle."""
-        result = profile_manager.detect_profile()
-        assert result == ProfileType.IDLE
+    def test_unknown_foreground_holds_current_profile(self, mock_procs, mock_fg, profile_manager):
+        """An unrecognized foreground app is 'no signal' — the current profile
+        holds. Idle is entered only through real input idleness, so a
+        screensaver or lock screen taking the foreground can't flip profiles."""
+        profile_manager._active_profile = ProfileType.BROWSING
+        assert profile_manager.detect_profile() == ProfileType.BROWSING
+        # Holds even after every debounce window has expired
+        past = time.monotonic() - 120
+        profile_manager._pending_since = past
+        profile_manager._current_last_seen = past
+        assert profile_manager.detect_profile() == ProfileType.BROWSING
+        assert profile_manager.active_profile == ProfileType.BROWSING
+
+
+class TestEveryProfileHasConfig:
+    """Detection can produce profiles that profiles.yaml doesn't define
+    (browsing/media/comms) — the manager must backfill empty configs so no
+    query ever raises KeyError (the cause of the 2026-07 toast-spam bug)."""
+
+    def test_all_profile_types_have_configs(self, profile_manager):
+        for ptype in ProfileType:
+            assert ptype in profile_manager.profiles, f"missing config for {ptype.value}"
+
+    def test_undeclared_profile_queries_do_not_raise(self, profile_manager):
+        for ptype in (ProfileType.BROWSING, ProfileType.MEDIA, ProfileType.COMMS):
+            profile_manager._active_profile = ptype
+            assert profile_manager.get_profile_actions() == {}
+            assert profile_manager.get_kill_candidates() == []
+            assert profile_manager.classify_process("random_app.exe") == "unknown"
+
+
+class TestInputIdleDetection:
+    """Idle is defined by real keyboard/mouse inactivity, not by which
+    window happens to be foreground."""
+
+    @patch.object(ProfileManager, "_get_foreground_process_name", return_value="firefox.exe")
+    def test_input_idle_switches_to_idle(self, mock_fg, profile_manager):
+        profile_manager._active_profile = ProfileType.BROWSING
+        profile_manager._get_input_idle_seconds = lambda: 700.0  # > 10 min
+        profile_manager.detect_profile()  # starts idle debounce
+        past = time.monotonic() - 120
+        profile_manager._pending_since = past
+        profile_manager._current_last_seen = past
+        assert profile_manager.detect_profile() == ProfileType.IDLE
+
+    @patch.object(ProfileManager, "_get_foreground_process_name", return_value="firefox.exe")
+    def test_active_input_prevents_idle(self, mock_fg, profile_manager):
+        profile_manager._active_profile = ProfileType.BROWSING
+        profile_manager._current_last_seen = time.monotonic()
+        assert profile_manager.detect_profile() == ProfileType.BROWSING
+
+    def test_idle_probe_failure_is_not_idle(self, profile_manager):
+        """If GetLastInputInfo fails (None), never assume the user is idle."""
+        profile_manager._get_input_idle_seconds = lambda: None
+        with patch.object(ProfileManager, "_get_foreground_process_name", return_value="firefox.exe"):
+            profile_manager.detect_profile()
+            past = time.monotonic() - 120
+            profile_manager._pending_since = past
+            profile_manager._current_last_seen = past
+            assert profile_manager.detect_profile() == ProfileType.BROWSING
 
 
 class TestDebounce:

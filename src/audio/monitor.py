@@ -61,21 +61,26 @@ class AudioMonitor:
         sessions = []
         try:
             for session in self._AudioUtilities.GetAllSessions():
-                proc = session.Process
-                if proc is None:
-                    continue
+                # A session's process can exit between enumeration and access —
+                # skip that session instead of aborting the whole scan.
+                try:
+                    proc = session.Process
+                    if proc is None:
+                        continue
 
-                volume_ctl = session.SimpleAudioVolume
-                state_val = session.State
-                state_str = {0: "inactive", 1: "active", 2: "expired"}.get(state_val, "unknown")
+                    volume_ctl = session.SimpleAudioVolume
+                    state_val = session.State
+                    state_str = {0: "inactive", 1: "active", 2: "expired"}.get(state_val, "unknown")
 
-                sessions.append(AudioSession(
-                    pid=proc.pid,
-                    process_name=proc.name(),
-                    volume=round(volume_ctl.GetMasterVolume(), 2) if volume_ctl else 0.0,
-                    is_muted=bool(volume_ctl.GetMute()) if volume_ctl else False,
-                    state=state_str,
-                ))
+                    sessions.append(AudioSession(
+                        pid=proc.pid,
+                        process_name=proc.name(),
+                        volume=round(volume_ctl.GetMasterVolume(), 2) if volume_ctl else 0.0,
+                        is_muted=bool(volume_ctl.GetMute()) if volume_ctl else False,
+                        state=state_str,
+                    ))
+                except Exception as e:
+                    logger.debug(f"Skipping audio session (process gone?): {e}")
         except Exception as e:
             logger.error(f"Error enumerating audio sessions: {e}")
 

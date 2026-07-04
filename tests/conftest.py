@@ -78,10 +78,16 @@ def sample_profiles_config():
 
 @pytest.fixture
 def profile_manager(sample_profiles_config):
-    """Pre-built ProfileManager for tests."""
+    """Pre-built ProfileManager for tests.
+
+    Input-idle is pinned to 0 ("user is active") so detection tests are
+    deterministic regardless of the machine running them.
+    """
     from src.profiles.manager import ProfileManager
-    return ProfileManager(
+    pm = ProfileManager(
         sample_profiles_config,
         global_whitelist=sample_profiles_config["global_whitelist"],
         global_blacklist=sample_profiles_config["global_blacklist"],
     )
+    pm._get_input_idle_seconds = lambda: 0.0
+    return pm

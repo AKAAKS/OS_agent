@@ -62,7 +62,7 @@ profiles:
       trim_idle_working_sets: true
 
   idle:
-    trigger_processes: []  # No user input for 10 minutes
+    trigger_processes: []  # Entered after 10 min without keyboard/mouse input (GetLastInputInfo)
     always_keep: []
     kill_candidates: []
     actions: {}

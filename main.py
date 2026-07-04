@@ -27,13 +27,21 @@ def request_shutdown() -> None:
         except Exception:
             pass
 
-# Force UTF-8 stdout/stderr to avoid cp1252 encoding errors on Windows
+# Force UTF-8 stdout/stderr to avoid cp1252 encoding errors on Windows.
+# Under pythonw there are NO standard streams (sys.stdout/stderr are None) —
+# bind them to devnull so libraries that write progress/telemetry to stderr
+# (chromadb/tqdm) don't crash with "'NoneType' object has no attribute 'write'".
 # (Skip when running under pytest — it manages its own capture)
 import io
+import os
 if "pytest" not in sys.modules:
-    if hasattr(sys.stdout, "buffer"):
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    elif hasattr(sys.stdout, "buffer"):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    if hasattr(sys.stderr, "buffer"):
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    elif hasattr(sys.stderr, "buffer"):
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 # Setup logging with rotation
@@ -97,23 +105,25 @@ def _has_console() -> bool:
 
 
 def create_hitl_console_callback():
-    """Console-based HITL callback, with headless fallback."""
+    """Console-based HITL callback.
+
+    With no console (pythonw / Task Scheduler) there is no human to ask, so
+    every gated action is DENIED — the gate fails closed rather than
+    rubber-stamping. Low-risk ungated actions are still auto-approved at the
+    gate itself and never reach this callback.
+    """
     headless = not _has_console()
 
     def callback(request):
-        # In headless mode: auto-approve low/medium, deny high
         if headless:
             risk = getattr(request, "risk_level", None)
             risk_val = risk.value if hasattr(risk, "value") else str(risk)
-            if risk_val == "high":
-                logger.warning(
-                    f"HITL denied (headless): {request.action} on {request.target} (risk: {risk_val})"
-                )
-                return False
-            logger.info(
-                f"HITL auto-approved (headless): {request.action} on {request.target} (risk: {risk_val})"
+            logger.warning(
+                f"HITL denied (headless, fail-closed): {request.action} on "
+                f"{request.target} (risk: {risk_val}) — gated actions need an "
+                "interactive console to be approved"
             )
-            return True
+            return False
 
         print(f"\n{'='*50}")
         print(f"  ACTION APPROVAL REQUIRED")
@@ -452,17 +462,27 @@ def main():
                 now = _time.monotonic()
 
                 if current != _last_profile:
-                    notifier.profile_changed(
-                        _last_profile.value, current.value, profile_manager.trigger_app
-                    )
-                    # Execute profile-specific actions (defer updates, trim working sets, etc.)
-                    actions = profile_manager.get_profile_actions()
-                    if actions:
-                        _execute_profile_actions(actions)
-
+                    # Commit the switch FIRST — if notification or actions
+                    # fail, the loop must not re-announce the same switch
+                    # every iteration (2026-07 toast-spam bug).
+                    previous = _last_profile
                     _last_profile = current
                     _profile_switch_count += 1
                     _profile_stable_since = now  # reset power plan stability timer
+
+                    # Idle transitions are routine (input pause, walking away)
+                    # — log them, but only toast real profile-to-profile switches.
+                    if ProfileType.IDLE not in (previous, current):
+                        notifier.profile_changed(
+                            previous.value, current.value, profile_manager.trigger_app
+                        )
+                    try:
+                        # Execute profile-specific actions (defer updates, trim working sets, etc.)
+                        actions = profile_manager.get_profile_actions()
+                        if actions:
+                            _execute_profile_actions(actions)
+                    except Exception as e:
+                        logger.error(f"Profile actions for '{current.value}' failed: {e}")
 
                 # Power plan switching — only after profile has been stable for 2+ minutes
                 time_stable = now - _profile_stable_since
@@ -476,7 +496,7 @@ def main():
                         logger.warning(f"Power plan switch failed: {result.message}")
 
             except Exception as e:
-                logger.debug(f"Profile detection error: {e}")
+                logger.error(f"Profile detection loop error: {e}")
             shutdown_event.wait(timeout=10)
 
     profile_thread = threading.Thread(target=profile_loop, daemon=True, name="profile-detect")

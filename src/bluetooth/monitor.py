@@ -35,10 +35,49 @@ class BTEvent:
 class BluetoothMonitor:
     """Monitors Bluetooth connectivity via Windows Event Log and PowerShell."""
 
+    # After this many consecutive PowerShell failures (usually 10s timeouts),
+    # stop querying for _PS_BACKOFF_SECONDS instead of hammering a hung
+    # provider every cycle.
+    _PS_FAILURE_THRESHOLD = 3
+    _PS_BACKOFF_SECONDS = 1800
+
     def __init__(self):
         self._event_history: list[BTEvent] = []
         self._disconnect_counts: dict[str, int] = {}
         self._max_history = 100
+        self._ps_failures = 0
+        self._ps_backoff_until = 0.0
+
+    def _run_ps(self, command: str, timeout: int):
+        """Run a PowerShell query with consecutive-failure backoff.
+
+        Returns the CompletedProcess, or None when the query failed or
+        queries are currently backed off.
+        """
+        import time as _time
+
+        if _time.monotonic() < self._ps_backoff_until:
+            return None
+        try:
+            result = subprocess.run(
+                ["powershell", "-Command", command],
+                capture_output=True, text=True, timeout=timeout,
+                creationflags=_SUBPROCESS_FLAGS,
+            )
+            self._ps_failures = 0
+            return result
+        except Exception as e:
+            self._ps_failures += 1
+            if self._ps_failures >= self._PS_FAILURE_THRESHOLD:
+                self._ps_backoff_until = _time.monotonic() + self._PS_BACKOFF_SECONDS
+                self._ps_failures = 0
+                logger.warning(
+                    f"Bluetooth PowerShell queries keep failing ({e}) — "
+                    f"pausing them for {self._PS_BACKOFF_SECONDS // 60} min"
+                )
+            else:
+                logger.error(f"Error getting BT devices: {e}")
+            return None
 
     def get_paired_devices(self) -> list[BTDevice]:
         """Get all paired Bluetooth devices via PowerShell (PnP + audio endpoints)."""
@@ -47,16 +86,13 @@ class BluetoothMonitor:
 
         # 1. Classic PnP Bluetooth devices
         try:
-            result = subprocess.run(
-                [
-                    "powershell", "-Command",
-                    "Get-PnpDevice -Class Bluetooth | "
-                    "Select-Object FriendlyName, InstanceId, Status | "
-                    "ConvertTo-Json",
-                ],
-                capture_output=True, text=True, timeout=10, creationflags=_SUBPROCESS_FLAGS,
+            result = self._run_ps(
+                "Get-PnpDevice -Class Bluetooth | "
+                "Select-Object FriendlyName, InstanceId, Status | "
+                "ConvertTo-Json",
+                timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result and result.returncode == 0 and result.stdout.strip():
                 import json
                 try:
                     data = json.loads(result.stdout)
@@ -83,17 +119,14 @@ class BluetoothMonitor:
 
         # 2. BT audio endpoints (catches speakers/headphones using classic A2DP)
         try:
-            result = subprocess.run(
-                [
-                    "powershell", "-Command",
-                    "Get-PnpDevice -Class AudioEndpoint -Status OK | "
-                    "Where-Object { $_.FriendlyName -match 'Bluetooth|BT|Wireless' -or "
-                    "$_.InstanceId -match 'BTHENUM' } | "
-                    "Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json",
-                ],
-                capture_output=True, text=True, timeout=10, creationflags=_SUBPROCESS_FLAGS,
+            result = self._run_ps(
+                "Get-PnpDevice -Class AudioEndpoint -Status OK | "
+                "Where-Object { $_.FriendlyName -match 'Bluetooth|BT|Wireless' -or "
+                "$_.InstanceId -match 'BTHENUM' } | "
+                "Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json",
+                timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result and result.returncode == 0 and result.stdout.strip():
                 import json
                 try:
                     data = json.loads(result.stdout)
@@ -124,19 +157,16 @@ class BluetoothMonitor:
         try:
             # Query BT-related event logs
             time_filter = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
-            result = subprocess.run(
-                [
-                    "powershell", "-Command",
-                    f'Get-WinEvent -FilterHashtable @{{'
-                    f"LogName='Microsoft-Windows-Bluetooth-BthLEEnum/Operational';"
-                    f"StartTime='{time_filter}'"
-                    f'}} -MaxEvents 20 -ErrorAction SilentlyContinue | '
-                    f'Select-Object TimeCreated, Id, Message | ConvertTo-Json',
-                ],
-                capture_output=True, text=True, timeout=15, creationflags=_SUBPROCESS_FLAGS,
+            result = self._run_ps(
+                f'Get-WinEvent -FilterHashtable @{{'
+                f"LogName='Microsoft-Windows-Bluetooth-BthLEEnum/Operational';"
+                f"StartTime='{time_filter}'"
+                f'}} -MaxEvents 20 -ErrorAction SilentlyContinue | '
+                f'Select-Object TimeCreated, Id, Message | ConvertTo-Json',
+                timeout=15,
             )
 
-            if result.returncode == 0 and result.stdout.strip():
+            if result and result.returncode == 0 and result.stdout.strip():
                 import json
                 try:
                     data = json.loads(result.stdout)
@@ -169,18 +199,15 @@ class BluetoothMonitor:
 
         # Also check system event log for BT errors
         try:
-            result = subprocess.run(
-                [
-                    "powershell", "-Command",
-                    f"Get-WinEvent -FilterHashtable @{{"
-                    f"LogName='System'; ProviderName='BTHUSB','bthport';"
-                    f"StartTime='{time_filter}'"
-                    f"}} -MaxEvents 10 -ErrorAction SilentlyContinue | "
-                    f"Select-Object TimeCreated, Id, Message | ConvertTo-Json",
-                ],
-                capture_output=True, text=True, timeout=15, creationflags=_SUBPROCESS_FLAGS,
+            result = self._run_ps(
+                f"Get-WinEvent -FilterHashtable @{{"
+                f"LogName='System'; ProviderName='BTHUSB','bthport';"
+                f"StartTime='{time_filter}'"
+                f"}} -MaxEvents 10 -ErrorAction SilentlyContinue | "
+                f"Select-Object TimeCreated, Id, Message | ConvertTo-Json",
+                timeout=15,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result and result.returncode == 0 and result.stdout.strip():
                 import json
                 try:
                     data = json.loads(result.stdout)
@@ -221,15 +248,12 @@ class BluetoothMonitor:
     def is_adapter_enabled(self) -> bool:
         """Check if the Bluetooth adapter is enabled."""
         try:
-            result = subprocess.run(
-                [
-                    "powershell", "-Command",
-                    "Get-PnpDevice -Class Bluetooth -FriendlyName '*adapter*','*radio*' | "
-                    "Select-Object Status | ConvertTo-Json",
-                ],
-                capture_output=True, text=True, timeout=10, creationflags=_SUBPROCESS_FLAGS,
+            result = self._run_ps(
+                "Get-PnpDevice -Class Bluetooth -FriendlyName '*adapter*','*radio*' | "
+                "Select-Object Status | ConvertTo-Json",
+                timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip():
+            if result and result.returncode == 0 and result.stdout.strip():
                 import json
                 data = json.loads(result.stdout)
                 if isinstance(data, dict):
