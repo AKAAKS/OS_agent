@@ -15,6 +15,10 @@ Runs as a background daemon with a console dashboard and Windows toast
 notifications. Safe by default: every high-risk action goes through a
 human-in-the-loop gate.
 
+![OS Agent live dashboard](docs/dashboard-demo.svg)
+
+<sub>Live terminal dashboard (`python dashboard.py`) — metrics, top processes, and the agent's risk-rated diagnoses. Shown with representative demo data.</sub>
+
 ## Highlights
 
 - **Autonomous OODA agent** (Observe → Orient → Decide → Act → Verify) built on
@@ -145,6 +149,11 @@ Edit and restart. No reload required.
 
 ## Architecture overview
 
+![OS Agent architecture — the OODA control loop and the agentkernel trust substrate](docs/architecture.svg)
+
+<details>
+<summary>Text version</summary>
+
 ```
  ┌─ Observer daemon (psutil + WMI) ────── SystemSnapshots
  │     │
@@ -170,6 +179,8 @@ Edit and restart. No reload required.
  │
  └─ Background: profile detection, BT monitor, audio suggestions, watchdog
 ```
+
+</details>
 
 Full module walkthrough: [ARCHITECTURE.md](ARCHITECTURE.md).
 

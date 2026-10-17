@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" width="1000" height="520" role="img" aria-label="OS Agent OODA control loop architecture">
+  <style>
+    text { font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif; }
+    .title  { fill: #88aaff; font-size: 17px; font-weight: 700; }
+    .sub    { fill: #7f8db3; font-size: 11px; }
+    .nlabel { fill: #e6edfb; font-size: 13px; font-weight: 600; text-anchor: middle; }
+    .nsub   { fill: #93a4ca; font-size: 10px; text-anchor: middle; }
+    .slabel { fill: #cdd9f1; font-size: 12px; font-weight: 600; }
+    .stext  { fill: #93a4ca; font-size: 10.5px; }
+    .klabel { fill: #e6edfb; font-size: 12px; font-weight: 600; text-anchor: middle; }
+    .ksub   { fill: #8ea2c8; font-size: 9.5px; text-anchor: middle; }
+    .loop   { fill: #7f8db3; font-size: 10.5px; text-anchor: middle; }
+  </style>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#6f8bc0"/>
+    </marker>
+  </defs>
+
+  <!-- panel -->
+  <rect x="4" y="4" width="992" height="512" rx="14" fill="#0d1526" stroke="#22314f" stroke-width="1.5"/>
+
+  <text class="title" x="28" y="40">OS Agent — OODA control loop</text>
+  <text class="sub" x="28" y="59">Observe → Orient → Decide → Act → Verify, on a LangGraph state machine</text>
+
+  <!-- return loop arc -->
+  <path d="M 916 100 C 916 60, 250 60, 250 100" fill="none" stroke="#6f8bc0" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text class="loop" x="583" y="56">re-samples every 5–30s</text>
+
+  <!-- pipeline arrows -->
+  <g stroke="#6f8bc0" stroke-width="1.6" marker-end="url(#arrow)">
+    <line x1="168" y1="127" x2="192" y2="127"/>
+    <line x1="306" y1="127" x2="330" y2="127"/>
+    <line x1="444" y1="127" x2="468" y2="127"/>
+    <line x1="586" y1="127" x2="610" y2="127"/>
+    <line x1="704" y1="127" x2="728" y2="127"/>
+    <line x1="834" y1="127" x2="858" y2="127"/>
+  </g>
+
+  <!-- pipeline nodes -->
+  <g>
+    <rect x="28"  y="100" width="140" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="98" y="123">Observer</text>
+    <text class="nsub"   x="98" y="140">psutil + WMI</text>
+
+    <rect x="194" y="100" width="112" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="250" y="123">Observe</text>
+    <text class="nsub"   x="250" y="140">anomaly detect</text>
+
+    <rect x="332" y="100" width="112" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="388" y="123">Orient</text>
+    <text class="nsub"   x="388" y="140">build context</text>
+
+    <rect x="470" y="100" width="116" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="528" y="123">Decide</text>
+    <text class="nsub"   x="528" y="140">plan action</text>
+
+    <!-- HITL gate (hexagon, amber) -->
+    <polygon points="632,100 684,100 704,127 684,154 632,154 612,127" fill="#2a2012" stroke="#e0a53a" stroke-width="1.4"/>
+    <text class="nlabel" x="658" y="123" style="fill:#ffd98a">HITL</text>
+    <text class="nsub"   x="658" y="140" style="fill:#e0a53a">approve / deny</text>
+
+    <rect x="730" y="100" width="104" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="782" y="123">Act</text>
+    <text class="nsub"   x="782" y="140">execute</text>
+
+    <rect x="860" y="100" width="112" height="54" rx="8" fill="#16213a" stroke="#35507f" stroke-width="1.2"/>
+    <text class="nlabel" x="916" y="123">Verify</text>
+    <text class="nsub"   x="916" y="140">→ fix memory</text>
+  </g>
+
+  <!-- drops to support boxes -->
+  <g stroke="#6f8bc0" stroke-width="1.6" marker-end="url(#arrow)">
+    <line x1="528" y1="154" x2="528" y2="194"/>
+    <line x1="782" y1="154" x2="782" y2="194"/>
+  </g>
+
+  <!-- support: Decide -->
+  <rect x="194" y="196" width="392" height="58" rx="8" fill="#13203c" stroke="#2f466e" stroke-width="1.2"/>
+  <text class="slabel" x="210" y="216">Decision engine</text>
+  <text class="stext"  x="210" y="232">4-layer: whitelist → blacklist → learned votes → AI</text>
+  <text class="stext"  x="210" y="247">LLM triage gpt-5-mini → gpt-5 · ChromaDB memory reuse</text>
+
+  <!-- support: Act -->
+  <rect x="612" y="196" width="360" height="58" rx="8" fill="#13203c" stroke="#2f466e" stroke-width="1.2"/>
+  <text class="slabel" x="628" y="216">AgentTools</text>
+  <text class="stext"  x="628" y="232">kill · priority · restart · powercfg</text>
+  <text class="stext"  x="628" y="247">sanitized run_command (allowlisted)</text>
+
+  <!-- binding note -->
+  <text class="loop" x="500" y="276">OS-domain policy (risk map · allowlist) binds to the kernel below</text>
+
+  <!-- kernel band -->
+  <rect x="28" y="286" width="944" height="196" rx="10" fill="#0f1a2e" stroke="#2b3d60" stroke-width="1.3"/>
+  <text class="title" x="44" y="312" style="font-size:13px">agentkernel</text>
+  <text class="sub" x="140" y="312" style="font-size:10.5px">reusable trust substrate — no src/ or platform imports (AST-enforced boundary)</text>
+
+  <g>
+    <rect x="52"  y="330" width="137" height="128" rx="8" fill="#15243f" stroke="#3a548a" stroke-width="1.1"/>
+    <text class="klabel" x="120" y="392">RiskLevel</text>
+    <text class="ksub"   x="120" y="410">severity model</text>
+
+    <rect x="203" y="330" width="137" height="128" rx="8" fill="#1d2a18" stroke="#5a7a3a" stroke-width="1.1"/>
+    <text class="klabel" x="271" y="385">ApprovalGate</text>
+    <text class="ksub"   x="271" y="403">fail-closed</text>
+    <text class="ksub"   x="271" y="416">human-in-the-loop</text>
+
+    <rect x="354" y="330" width="137" height="128" rx="8" fill="#15243f" stroke="#3a548a" stroke-width="1.1"/>
+    <text class="klabel" x="422" y="385">Command</text>
+    <text class="klabel" x="422" y="401">Sanitizer</text>
+    <text class="ksub"   x="422" y="419">allowlist + denylist</text>
+
+    <rect x="505" y="330" width="137" height="128" rx="8" fill="#15243f" stroke="#3a548a" stroke-width="1.1"/>
+    <text class="klabel" x="573" y="392">Audit log</text>
+    <text class="ksub"   x="573" y="410">every action (JSONL)</text>
+
+    <rect x="656" y="330" width="137" height="128" rx="8" fill="#15243f" stroke="#3a548a" stroke-width="1.1"/>
+    <text class="klabel" x="724" y="392">Cost ledger</text>
+    <text class="ksub"   x="724" y="410">daily USD cap</text>
+
+    <rect x="807" y="330" width="137" height="128" rx="8" fill="#15243f" stroke="#3a548a" stroke-width="1.1"/>
+    <text class="klabel" x="875" y="392">Fix memory</text>
+    <text class="ksub"   x="875" y="410">replay past fixes</text>
+  </g>
+</svg>
