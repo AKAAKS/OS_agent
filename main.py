@@ -69,10 +69,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("os_agent")
 
-# Install crash reporter early so even subsystem-init failures get dumped.
-from src.reliability import install_crash_reporter
-_crash_reporter = install_crash_reporter()
-
 
 def load_config() -> tuple[dict, dict]:
     """Load and schema-validate settings + profiles. Exits the process if invalid."""
@@ -198,6 +194,12 @@ def _parse_args() -> "argparse.Namespace":
 
 def main():
     args = _parse_args()
+
+    # Install crash reporter early so even subsystem-init failures get dumped.
+    # Done here, not at import, so importing main.py has no global side effect.
+    from src.reliability import install_crash_reporter
+    _crash_reporter = install_crash_reporter()
+
     logger.info("OS Agent starting...")
     if args.dry_run:
         logger.warning("DRY-RUN MODE — no actions will be executed, only audited")

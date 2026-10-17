@@ -10,6 +10,36 @@ import pytest
 from src.reliability.crash_reporter import CrashReporter, install_crash_reporter
 
 
+@pytest.fixture(autouse=True)
+def _isolate_excepthooks():
+    """Keep crash-reporter tests from leaking global hooks into the session.
+
+    install_crash_reporter() replaces sys.excepthook / threading.excepthook and
+    chains to whatever was installed before. Without restoring them, each test
+    stacks another hook and a later exception fans out across all of them —
+    which is how 'hook test' dumps ended up in the real logs/crashes. Start
+    every test from the pristine interpreter defaults and restore afterward.
+    """
+    saved_sys, saved_thread = sys.excepthook, threading.excepthook
+    sys.excepthook = sys.__excepthook__
+    threading.excepthook = threading.__excepthook__
+    try:
+        yield
+    finally:
+        sys.excepthook = saved_sys
+        threading.excepthook = saved_thread
+
+
+def test_importing_main_does_not_install_a_crash_hook_at_import():
+    """Importing main must not mutate global excepthooks (the install belongs
+    inside main(), so a test that imports main doesn't register a logs/crashes
+    hook for the whole session)."""
+    import main
+
+    assert not hasattr(main, "_crash_reporter"), \
+        "crash reporter must be installed inside main(), not at module import"
+
+
 @pytest.fixture
 def reporter(tmp_path):
     return CrashReporter(crash_dir=tmp_path / "crashes", retention=5)
