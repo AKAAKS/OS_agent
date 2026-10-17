@@ -86,22 +86,21 @@ def _install_demo_data() -> None:
     dashboard.psutil.cpu_count = lambda logical=True: 16
 
 
-def _windows_chrome(svg: str) -> str:
-    """Rich draws macOS traffic-light window buttons by default. This is a
-    Windows-only project, so strip those and draw Windows-style window controls
-    (minimize / maximize / close) at the top-right instead."""
+def _tidy_chrome(svg: str) -> str:
+    """Rich draws macOS traffic-light window buttons and centers the title.
+    Drop the buttons entirely and left-align the title for a clean, neutral
+    terminal card."""
+    # Remove the macOS traffic-light dots.
     svg = re.sub(r'\s*<circle[^>]*fill="#(?:ff5f57|febc2e|28c840)"[^>]*/>', "", svg)
-    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
-    w = float(m.group(1)) if m else 1458.0
-    controls = (
-        '<g stroke="#c5c8c6" stroke-width="1.5" fill="none" stroke-linecap="round">'
-        f'<line x1="{w-70:.0f}" y1="26" x2="{w-56:.0f}" y2="26"/>'
-        f'<rect x="{w-46:.0f}" y="19" width="13" height="13"/>'
-        f'<line x1="{w-23:.0f}" y1="19" x2="{w-10:.0f}" y2="32"/>'
-        f'<line x1="{w-10:.0f}" y1="19" x2="{w-23:.0f}" y2="32"/>'
-        "</g>"
-    )
-    return svg.replace("</svg>", controls + "\n</svg>")
+
+    # Left-align the title text (Rich centers it with text-anchor="middle").
+    def _left_align(match: "re.Match") -> str:
+        tag = match.group(0)
+        tag = tag.replace('text-anchor="middle"', 'text-anchor="start"')
+        tag = re.sub(r'x="[\d.]+"', 'x="22"', tag)
+        return tag
+
+    return re.sub(r'<text class="[^"]*-title"[^>]*>', _left_align, svg)
 
 
 def main() -> None:
@@ -116,7 +115,7 @@ def main() -> None:
     console.print(layout)
 
     svg = console.export_svg(title="OS Agent — Live Dashboard (demo data)")
-    svg = _windows_chrome(svg)
+    svg = _tidy_chrome(svg)
 
     out = ROOT / "docs" / "dashboard-demo.svg"
     out.parent.mkdir(parents=True, exist_ok=True)
