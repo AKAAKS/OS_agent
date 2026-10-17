@@ -72,6 +72,34 @@ class TestCrashReporter:
         assert len(recent) == 3
         assert all("exception_type" in r for r in recent)
 
+    def test_rapid_captures_in_same_instant_do_not_overwrite(self, reporter, monkeypatch):
+        """Three crashes within one clock tick must yield three distinct dumps.
+
+        The filename was timestamp+PID only; on Windows the clock is coarse
+        enough that rapid captures collided and overwrote each other.
+        """
+        import datetime as _dt
+
+        import src.reliability.crash_reporter as cr
+
+        frozen = _dt.datetime(2026, 1, 1, 12, 0, 0, 0)
+
+        class _FrozenDateTime:
+            @staticmethod
+            def now(*args, **kwargs):
+                return frozen
+
+        monkeypatch.setattr(cr, "datetime", _FrozenDateTime)
+
+        for i in range(3):
+            try:
+                raise RuntimeError(f"err{i}")
+            except RuntimeError:
+                reporter.capture(*sys.exc_info())
+
+        dumps = list(reporter.crash_dir.glob("crash_*.json"))
+        assert len(dumps) == 3, "rapid captures must not overwrite one another"
+
     def test_list_recent_on_missing_dir_is_empty(self, tmp_path):
         rep = CrashReporter(crash_dir=tmp_path / "does-not-exist")
         assert rep.list_recent() == []

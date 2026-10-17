@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Crash dumps could overwrite each other.** Dump filenames used only a
+  timestamp + PID; Windows' coarse `datetime.now()` meant rapid-fire crashes
+  in the same clock tick produced identical filenames and clobbered earlier
+  dumps (reproduced: 368/400 trials lost a dump). Added a random suffix so
+  every dump is distinct. Regression test freezes the clock to prove it.
 - **Bluetooth monitor PowerShell timeouts.** The monitor cold-launched ~4
   `powershell.exe` processes per 60s cycle; under load, `Get-PnpDevice` and
   `Get-WinEvent` occasionally exceeded their 10–15s timeouts (~1–4 logged

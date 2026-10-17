@@ -22,6 +22,7 @@ import platform
 import sys
 import threading
 import traceback
+import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -100,8 +101,10 @@ class CrashReporter:
             "context": self._gather_context(),
         }
 
-        # Microsecond granularity so rapid-fire crashes don't overwrite each other
-        fname = f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.getpid()}.json"
+        # Timestamp + PID + a random suffix: rapid-fire crashes can land in the
+        # same clock tick (Windows' datetime.now() is coarse), so the timestamp
+        # alone is not unique — the suffix keeps dumps from overwriting each other.
+        fname = f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.getpid()}_{uuid.uuid4().hex[:8]}.json"
         path = self.crash_dir / fname
         try:
             path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
