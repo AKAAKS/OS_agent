@@ -47,10 +47,15 @@ class BluetoothMonitor:
         self._max_history = 100
         self._ps_failures = 0
         self._ps_backoff_until = 0.0
-        # Event logs Windows has told us don't exist on this machine; never
-        # re-queried (a cold powershell launch per cycle for a missing log was
-        # pure waste and an occasional timeout source).
-        self._dead_logs: set[str] = set()
+        # Which BT operational event logs actually exist + are enabled on this
+        # machine. Probed once (lazily) and cached; None means "not yet probed".
+        # Skipping absent logs avoids a cold powershell launch per cycle for a
+        # channel that will never return anything (a timeout source).
+        self._available_op_logs: set[str] | None = None
+
+    # BT operational channels worth scanning when present. The System-provider
+    # query (BTHUSB/bthport) is handled separately and always runs.
+    _BT_OPERATIONAL_LOGS = ("Microsoft-Windows-Bluetooth-BthLEEnum/Operational",)
 
     def _run_ps(self, command: str, timeout: int):
         """Run a PowerShell query with consecutive-failure backoff.
@@ -85,23 +90,43 @@ class BluetoothMonitor:
                 logger.warning(f"Bluetooth query failed (recoverable): {e}")
             return None
 
-    def _query_event_log(self, log_key: str, command: str, timeout: int):
-        """Run an event-log query, skipping logs Windows has reported missing.
+    def _probe_operational_logs(self) -> set[str]:
+        """Return the BT operational logs that exist + are enabled here.
 
-        Caches a 'log does not exist' result so a nonexistent channel is
-        queried at most once for the life of the process.
+        Runs a single `Get-WinEvent -ListLog` probe the first time it's needed
+        and caches the result. Determining presence by listing the logs is
+        reliable; the per-query error for a missing channel is a generic
+        'parameter is incorrect' that can't be told apart from other failures.
         """
-        if log_key in self._dead_logs:
-            return None
-        result = self._run_ps(command, timeout=timeout)
+        if self._available_op_logs is not None:
+            return self._available_op_logs
+
+        names = "','".join(self._BT_OPERATIONAL_LOGS)
+        result = self._run_ps(
+            f"Get-WinEvent -ListLog '{names}' -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.IsEnabled }} | "
+            f"Select-Object -ExpandProperty LogName | ConvertTo-Json",
+            timeout=10,
+        )
         if result is None:
-            return None
-        if result.returncode != 0 and result.stderr and \
-                "not an event log" in result.stderr.lower():
-            self._dead_logs.add(log_key)
-            logger.info(f"Bluetooth event log '{log_key}' not present — skipping it from now on")
-            return None
-        return result
+            # Backed off or failed — don't cache; re-probe next time.
+            return set()
+
+        available: set[str] = set()
+        if result.returncode == 0 and result.stdout.strip():
+            import json
+            try:
+                data = json.loads(result.stdout)
+            except (json.JSONDecodeError, ValueError):
+                data = []
+            if isinstance(data, str):
+                data = [data]
+            available = {str(x) for x in data if x}
+        missing = set(self._BT_OPERATIONAL_LOGS) - available
+        if missing:
+            logger.info(f"Bluetooth operational log(s) not present — skipping: {', '.join(sorted(missing))}")
+        self._available_op_logs = available
+        return available
 
     @staticmethod
     def _as_list(value) -> list:
@@ -180,15 +205,17 @@ class BluetoothMonitor:
         try:
             # Query BT-related event logs
             time_filter = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
-            result = self._query_event_log(
-                "Microsoft-Windows-Bluetooth-BthLEEnum/Operational",
-                f'Get-WinEvent -FilterHashtable @{{'
-                f"LogName='Microsoft-Windows-Bluetooth-BthLEEnum/Operational';"
-                f"StartTime='{time_filter}'"
-                f'}} -MaxEvents 20 -ErrorAction SilentlyContinue | '
-                f'Select-Object TimeCreated, Id, Message | ConvertTo-Json',
-                timeout=15,
-            )
+            if "Microsoft-Windows-Bluetooth-BthLEEnum/Operational" in self._probe_operational_logs():
+                result = self._run_ps(
+                    f'Get-WinEvent -FilterHashtable @{{'
+                    f"LogName='Microsoft-Windows-Bluetooth-BthLEEnum/Operational';"
+                    f"StartTime='{time_filter}'"
+                    f'}} -MaxEvents 20 -ErrorAction SilentlyContinue | '
+                    f'Select-Object TimeCreated, Id, Message | ConvertTo-Json',
+                    timeout=15,
+                )
+            else:
+                result = None
 
             if result and result.returncode == 0 and result.stdout.strip():
                 import json
@@ -223,8 +250,7 @@ class BluetoothMonitor:
 
         # Also check system event log for BT errors
         try:
-            result = self._query_event_log(
-                "System/BT",
+            result = self._run_ps(
                 f"Get-WinEvent -FilterHashtable @{{"
                 f"LogName='System'; ProviderName='BTHUSB','bthport';"
                 f"StartTime='{time_filter}'"

@@ -68,32 +68,53 @@ def test_get_paired_devices_uses_a_single_powershell_call(recorder):
     assert "Intel Bluetooth Radio" not in names     # adapter/radio filtered out
 
 
-def test_missing_event_log_is_queried_once_then_skipped(recorder):
-    """When Windows says a log doesn't exist, never query it again."""
-    missing_msg = (
-        "There is not an event log on the localhost computer that matches "
-        "\"Microsoft-Windows-Bluetooth-BthLEEnum/Operational\"."
-    )
-
-    def respond(args, **kwargs):
-        command = args[-1]
-        recorder["calls"].append({"command": command, "timeout": kwargs.get("timeout")})
-        if "BthLEEnum" in command:
-            return FakeCompleted(stdout="", returncode=1, stderr=missing_msg)
-        return FakeCompleted(stdout="")  # System log: empty but fine
-
+def _install(monkeypatch_target_calls, responder):
+    """Point monitor.subprocess.run at `responder`, recording calls."""
     import src.bluetooth.monitor as mod
-    mod.subprocess.run = respond
+
+    def run(args, **kwargs):
+        command = args[-1]
+        monkeypatch_target_calls.append({"command": command, "timeout": kwargs.get("timeout")})
+        return responder(command)
+
+    mod.subprocess.run = run
+
+
+def test_missing_operational_log_is_probed_once_then_never_scanned(recorder):
+    """A BT operational log absent from the one-time probe is never scanned."""
+    def responder(command):
+        if "ListLog" in command:
+            return FakeCompleted(stdout="[]")          # no operational BT logs present
+        return FakeCompleted(stdout="")                # System query: empty, fine
+    _install(recorder["calls"], responder)
 
     monitor = BluetoothMonitor()
     monitor.get_recent_events()
     monitor.get_recent_events()
 
-    bthle_queries = [c for c in recorder["calls"] if "BthLEEnum" in c["command"]]
-    assert len(bthle_queries) == 1, "missing log must be queried at most once"
-    # the System log query still runs on both cycles
-    system_queries = [c for c in recorder["calls"] if "BTHUSB" in c["command"]]
-    assert len(system_queries) == 2
+    probes = [c for c in recorder["calls"] if "ListLog" in c["command"]]
+    assert len(probes) == 1, "operational logs are probed once and cached"
+    bthle_scans = [c for c in recorder["calls"]
+                   if "FilterHashtable" in c["command"] and "BthLEEnum" in c["command"]]
+    assert len(bthle_scans) == 0, "a missing operational log is never scanned"
+    system_scans = [c for c in recorder["calls"] if "BTHUSB" in c["command"]]
+    assert len(system_scans) == 2, "the System BT log is still scanned every cycle"
+
+
+def test_present_operational_log_is_scanned(recorder):
+    """A BT operational log the probe reports as present IS scanned."""
+    def responder(command):
+        if "ListLog" in command:
+            return FakeCompleted(stdout='"Microsoft-Windows-Bluetooth-BthLEEnum/Operational"')
+        return FakeCompleted(stdout="")
+    _install(recorder["calls"], responder)
+
+    monitor = BluetoothMonitor()
+    monitor.get_recent_events()
+
+    bthle_scans = [c for c in recorder["calls"]
+                   if "FilterHashtable" in c["command"] and "BthLEEnum" in c["command"]]
+    assert len(bthle_scans) == 1, "a present operational log is scanned"
 
 
 def test_handled_timeout_logs_warning_not_error(recorder, caplog):
