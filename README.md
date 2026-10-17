@@ -1,5 +1,12 @@
 # OS Agent
 
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![OpenAI](https://img.shields.io/badge/LLM-OpenAI-412991?logo=openai&logoColor=white)
+![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1C3C3C)
+![Tests](https://img.shields.io/badge/tests-150%2B%20passing-brightgreen)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 A personal Windows 11 system optimizer. Watches your computer, detects
 anomalies (CPU/RAM/disk/GPU/thermal/Bluetooth), diagnoses them with an LLM, and
 applies fixes — with your approval for anything risky.
@@ -7,6 +14,25 @@ applies fixes — with your approval for anything risky.
 Runs as a background daemon with a console dashboard and Windows toast
 notifications. Safe by default: every high-risk action goes through a
 human-in-the-loop gate.
+
+## Highlights
+
+- **Autonomous OODA agent** (Observe → Orient → Decide → Act → Verify) built on
+  a **LangGraph** state machine, with two conditional routers (skip-vs-act and
+  HITL approved-vs-denied).
+- **Fail-closed safety kernel** (`agentkernel/`) — a reusable, platform-agnostic
+  trust substrate (risk model, approval gate, command sanitizer, audit log, cost
+  ledger, fix memory) with **zero dependency on the host app**, enforced at test
+  time by an AST boundary check.
+- **Tiered LLM** cost control: cheap `gpt-5-mini` triage escalates to `gpt-5`
+  only when confidence is low, behind per-session **and** persistent daily spend
+  caps and a circuit breaker.
+- **Learns over time** — ChromaDB semantic memory reuses past fixes; a 4-layer
+  decision engine (whitelist → blacklist → learned votes → AI) records your
+  kill/keep choices.
+- **Production hygiene** — Pydantic-validated config, append-only action audit
+  log, local-only crash reporter (zero network egress), graceful shutdown, and
+  **150+ tests** covering the full OODA flow.
 
 ---
 
@@ -155,9 +181,10 @@ Full module walkthrough: [ARCHITECTURE.md](ARCHITECTURE.md).
 python -m pytest tests/ -v
 ```
 
-Currently 111 tests covering: anomaly detection, decision engine, process
-monitor, LLM client, profile manager, config schema, cost ledger, action
-audit, crash reporter, and full OODA integration flows.
+150+ tests covering: anomaly detection, decision engine, process monitor, LLM
+client, profile manager, config schema, the agentkernel trust components (risk,
+approval gate, sanitizer, cost ledger, fix memory, boundary contract), crash
+reporter, and full OODA integration flows.
 
 ---
 

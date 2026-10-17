@@ -67,7 +67,7 @@ ERROR src.memory.store: Semantic memory failed to init
 This is non-fatal — the agent continues without fix reuse. To recover:
 
 1. Stop the agent
-2. Delete `data/chroma/`
+2. Delete `data/chromadb/`
 3. Restart — a fresh collection is created
 
 ### "Session/daily cost cap reached"

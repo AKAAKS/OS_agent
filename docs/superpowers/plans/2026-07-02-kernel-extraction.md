@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Repo:** `C:\Users\akshi\OneDrive\Desktop\OS_agent`. Run all commands from the repo root. Tests: `python -m pytest tests/ -q`. The suite currently passes 120 tests; it must never go red at a commit boundary.
+- **Repo:** the `OS_agent` repo root. Run all commands from the repo root. Tests: `python -m pytest tests/ -q`. The suite currently passes 120 tests; it must never go red at a commit boundary.
 - **Kernel boundary (hard rule):** no module under `agentkernel/` may import `src.*`, `psutil`, `win32*`, `wmi`, `pycaw`, `PyQt6`, `langgraph`, `openai`, `winotify`, or `comtypes`. `chromadb` is allowed only inside a `try/except ImportError`. Task 1's boundary test enforces this; it must pass at every commit from Task 1 onward.
 - **Safety invariants (must remain true; existing tests verify them):** (a) structured actions only — never free-text-as-command; (b) the approval gate fails closed (no callback → deny, callback exception → deny) and never silently auto-approves `kill_process`/`restart_service`/`run_command`; (c) the run_command allowlist stays read-only-diagnostics (no shell interpreters, no `sc`/`net`/`wmic`/`taskkill`/`bcdedit`/`diskpart`); (d) nothing ever auto-disables Windows Defender.
 - **Line endings:** repo files are LF. After every Edit/Write, check `git diff --stat` — if a file shows as fully rewritten, normalize with `tr -d '\r' < file > tmp && mv tmp file` before committing. Diffs must show only real changes.

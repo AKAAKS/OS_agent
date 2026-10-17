@@ -1,4 +1,0 @@
-END TASK: schtasks /end /tn "OS_Agent"
-START: schtasks /run /tn "OS_Agent"
-CHECK LOGS: type "C:\Users\akshi\OneDrive\Desktop\OS_agent\logs\agent.log"
-CHECK STATUS: schtasks /query /tn "OS_Agent" /fo LIST

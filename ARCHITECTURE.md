@@ -10,6 +10,15 @@ act, HITL approved vs. denied).
 ## Module map
 
 ```
+agentkernel/            # Reusable trust substrate — no src/ or platform deps
+│                       # (AST-enforced by tests/test_kernel_boundary.py)
+├── risk.py                 RiskLevel enum, severity merge, lenient parsing
+├── gate.py                 ApprovalGate — fail-closed human-in-the-loop
+├── sanitize.py             CommandSanitizer — executable allowlist + denylist
+├── audit.py                ActionAuditLog — JSONL record of every action
+├── costs.py                DailyCostLedger — persistent per-day USD spend cap
+└── memory.py               FixMemory — ChromaDB recall of past (structured) fixes
+
 src/
 ├── observer/           # Observe stage
 │   ├── daemon.py           SystemObserver — samples psutil every N seconds,
@@ -20,30 +29,30 @@ src/
 │   ├── graph.py            OODAAgent — LangGraph state machine
 │   ├── llm.py              LLMClient — tiered OpenAI (triage → complex)
 │   │                       with circuit breaker and cost caps
-│   ├── tools.py            AgentTools — kill, priority, restart, powercfg,
-│   │                       run_command (allowlisted + sanitized)
-│   ├── audit.py            ActionAuditLog — JSONL record of every action
-│   └── cost_ledger.py      Persistent per-day USD spend tracker
+│   └── tools.py            AgentTools — kill, priority, restart, powercfg,
+│                           run_command (bound to the kernel CommandSanitizer)
 │
 ├── decisions/          # 4-layer decision engine
 │   ├── engine.py           Whitelist → blacklist → learned → AI
 │   └── learning.py         BehavioralLearner — records user kill/keep votes
 │
+├── safety/             # Binds OS-domain policy onto the kernel
+│   ├── policy.py           RISK_MAP for every action + build_approval_gate()
+│   │                       mapping settings.yaml's safety: section onto the gate
+│   └── sandbox.py          Optional Docker sandbox for trial-running commands
+│
 ├── profiles/
 │   └── manager.py          Detects active profile from foreground process
 │                           + running processes, with asymmetric debouncing
-│
-├── memory/
-│   └── store.py            SemanticMemory — ChromaDB for fix reuse
-│
-├── safety/
-│   └── hitl.py             HITLGate — risk level → approval callback
 │
 ├── audio/                  Active app audio detection + suggestions
 ├── bluetooth/              Event-log scraper + diagnostic engine
 ├── notifications/          Windows toasts via winotify
 ├── startup/                One-time startup program analyzer
 ├── config/                 Pydantic schemas (settings.yaml + profiles.yaml)
+├── gui/                    PyQt6 system-tray icon + 4-tab details window
+├── dashboard/              Rich console dashboard widget
+├── memory/                 Local sentence-transformers embedding utility (optional)
 └── reliability/
     └── crash_reporter.py   sys.excepthook + threading.excepthook →
                             logs/crashes/<timestamp>.json
@@ -122,7 +131,7 @@ threads, no Windows "program stopped responding" dialog on shutdown.
 ## Data locations
 
 - `data/decisions.db` — SQLite: user kill/keep votes
-- `data/chroma/` — vector store for semantic memory
+- `data/chromadb/` — vector store for semantic memory
 - `data/actions.jsonl` — append-only action audit log
 - `data/cost_ledger.json` — daily LLM spend by date
 - `data/sessions.jsonl` — one row per process run (duration, tokens, cost)
