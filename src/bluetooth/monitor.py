@@ -47,6 +47,10 @@ class BluetoothMonitor:
         self._max_history = 100
         self._ps_failures = 0
         self._ps_backoff_until = 0.0
+        # Event logs Windows has told us don't exist on this machine; never
+        # re-queried (a cold powershell launch per cycle for a missing log was
+        # pure waste and an occasional timeout source).
+        self._dead_logs: set[str] = set()
 
     def _run_ps(self, command: str, timeout: int):
         """Run a PowerShell query with consecutive-failure backoff.
@@ -76,78 +80,97 @@ class BluetoothMonitor:
                     f"pausing them for {self._PS_BACKOFF_SECONDS // 60} min"
                 )
             else:
-                logger.error(f"Error getting BT devices: {e}")
+                # Recoverable: the next cycle retries, and the backoff above
+                # engages if failures persist. Not an ERROR.
+                logger.warning(f"Bluetooth query failed (recoverable): {e}")
             return None
 
+    def _query_event_log(self, log_key: str, command: str, timeout: int):
+        """Run an event-log query, skipping logs Windows has reported missing.
+
+        Caches a 'log does not exist' result so a nonexistent channel is
+        queried at most once for the life of the process.
+        """
+        if log_key in self._dead_logs:
+            return None
+        result = self._run_ps(command, timeout=timeout)
+        if result is None:
+            return None
+        if result.returncode != 0 and result.stderr and \
+                "not an event log" in result.stderr.lower():
+            self._dead_logs.add(log_key)
+            logger.info(f"Bluetooth event log '{log_key}' not present — skipping it from now on")
+            return None
+        return result
+
+    @staticmethod
+    def _as_list(value) -> list:
+        """Normalize ConvertTo-Json output (single object -> one-item list)."""
+        if value is None:
+            return []
+        if isinstance(value, dict):
+            return [value]
+        return value if isinstance(value, list) else []
+
     def get_paired_devices(self) -> list[BTDevice]:
-        """Get all paired Bluetooth devices via PowerShell (PnP + audio endpoints)."""
-        devices = []
-        seen_names = set()
+        """Get all paired Bluetooth devices via a single PowerShell launch.
 
-        # 1. Classic PnP Bluetooth devices
-        try:
-            result = self._run_ps(
-                "Get-PnpDevice -Class Bluetooth | "
-                "Select-Object FriendlyName, InstanceId, Status | "
-                "ConvertTo-Json",
-                timeout=10,
-            )
-            if result and result.returncode == 0 and result.stdout.strip():
-                import json
-                try:
-                    data = json.loads(result.stdout)
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning("Failed to parse BT PnP device JSON")
-                    data = []
-                if isinstance(data, dict):
-                    data = [data]
-                for item in data:
-                    name = item.get("FriendlyName", "Unknown")
-                    # Skip the BT adapter itself
-                    if any(kw in name.lower() for kw in ["adapter", "radio", "host"]):
-                        continue
-                    seen_names.add(name.lower())
-                    devices.append(BTDevice(
-                        name=name,
-                        address=item.get("InstanceId", ""),
-                        connected=item.get("Status", "") == "OK",
-                        device_type=self._classify_device(name),
-                        status=item.get("Status", "Unknown"),
-                    ))
-        except Exception as e:
-            logger.error(f"Error getting BT devices: {e}")
+        Both the classic PnP Bluetooth devices and the BT audio endpoints
+        (speakers/headphones on classic A2DP) are fetched in one combined
+        query. Get-PnpDevice is slow and was previously launched twice per
+        cycle — the dominant source of the per-cycle timeouts.
+        """
+        devices: list[BTDevice] = []
+        seen_names: set[str] = set()
 
-        # 2. BT audio endpoints (catches speakers/headphones using classic A2DP)
+        result = self._run_ps(
+            "$bt = @(Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | "
+            "Select-Object FriendlyName, InstanceId, Status); "
+            "$au = @(Get-PnpDevice -Class AudioEndpoint -Status OK -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.FriendlyName -match 'Bluetooth|BT|Wireless' -or "
+            "$_.InstanceId -match 'BTHENUM' } | "
+            "Select-Object FriendlyName, InstanceId, Status); "
+            "[pscustomobject]@{ Bluetooth = $bt; Audio = $au } | ConvertTo-Json -Depth 4",
+            timeout=20,
+        )
+        if not (result and result.returncode == 0 and result.stdout.strip()):
+            return devices
+
+        import json
         try:
-            result = self._run_ps(
-                "Get-PnpDevice -Class AudioEndpoint -Status OK | "
-                "Where-Object { $_.FriendlyName -match 'Bluetooth|BT|Wireless' -or "
-                "$_.InstanceId -match 'BTHENUM' } | "
-                "Select-Object FriendlyName, InstanceId, Status | ConvertTo-Json",
-                timeout=10,
-            )
-            if result and result.returncode == 0 and result.stdout.strip():
-                import json
-                try:
-                    data = json.loads(result.stdout)
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning("Failed to parse BT audio endpoint JSON")
-                    data = []
-                if isinstance(data, dict):
-                    data = [data]
-                for item in data:
-                    name = item.get("FriendlyName", "Unknown")
-                    if name.lower() not in seen_names:
-                        seen_names.add(name.lower())
-                        devices.append(BTDevice(
-                            name=name,
-                            address=item.get("InstanceId", ""),
-                            connected=True,  # AudioEndpoint with Status OK = active
-                            device_type="audio",
-                            status="OK",
-                        ))
-        except Exception as e:
-            logger.debug(f"Error getting BT audio endpoints: {e}")
+            data = json.loads(result.stdout)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning("Failed to parse BT device JSON")
+            return devices
+        if not isinstance(data, dict):
+            return devices
+
+        # Classic PnP Bluetooth devices (skip the adapter/radio itself).
+        for item in self._as_list(data.get("Bluetooth")):
+            name = item.get("FriendlyName", "Unknown")
+            if any(kw in name.lower() for kw in ["adapter", "radio", "host"]):
+                continue
+            seen_names.add(name.lower())
+            devices.append(BTDevice(
+                name=name,
+                address=item.get("InstanceId", ""),
+                connected=item.get("Status", "") == "OK",
+                device_type=self._classify_device(name),
+                status=item.get("Status", "Unknown"),
+            ))
+
+        # BT audio endpoints (Status OK == active).
+        for item in self._as_list(data.get("Audio")):
+            name = item.get("FriendlyName", "Unknown")
+            if name.lower() not in seen_names:
+                seen_names.add(name.lower())
+                devices.append(BTDevice(
+                    name=name,
+                    address=item.get("InstanceId", ""),
+                    connected=True,
+                    device_type="audio",
+                    status="OK",
+                ))
 
         return devices
 
@@ -157,7 +180,8 @@ class BluetoothMonitor:
         try:
             # Query BT-related event logs
             time_filter = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
-            result = self._run_ps(
+            result = self._query_event_log(
+                "Microsoft-Windows-Bluetooth-BthLEEnum/Operational",
                 f'Get-WinEvent -FilterHashtable @{{'
                 f"LogName='Microsoft-Windows-Bluetooth-BthLEEnum/Operational';"
                 f"StartTime='{time_filter}'"
@@ -199,7 +223,8 @@ class BluetoothMonitor:
 
         # Also check system event log for BT errors
         try:
-            result = self._run_ps(
+            result = self._query_event_log(
+                "System/BT",
                 f"Get-WinEvent -FilterHashtable @{{"
                 f"LogName='System'; ProviderName='BTHUSB','bthport';"
                 f"StartTime='{time_filter}'"
@@ -251,7 +276,7 @@ class BluetoothMonitor:
             result = self._run_ps(
                 "Get-PnpDevice -Class Bluetooth -FriendlyName '*adapter*','*radio*' | "
                 "Select-Object Status | ConvertTo-Json",
-                timeout=10,
+                timeout=20,
             )
             if result and result.returncode == 0 and result.stdout.strip():
                 import json

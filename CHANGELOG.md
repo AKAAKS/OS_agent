@@ -2,6 +2,19 @@
 
 ## Unreleased — Production-quality release
 
+### Fixed
+
+- **Bluetooth monitor PowerShell timeouts.** The monitor cold-launched ~4
+  `powershell.exe` processes per 60s cycle; under load, `Get-PnpDevice` and
+  `Get-WinEvent` occasionally exceeded their 10–15s timeouts (~1–4 logged
+  ERRORs/day). `get_paired_devices` now runs a **single combined query**
+  (classic BT + audio endpoints) instead of two; a nonexistent event log is
+  detected and **skipped permanently** after the first probe (the
+  `BthLEEnum/Operational` channel doesn't exist on many machines); the
+  `Get-PnpDevice` timeout was raised to 20s; and handled, recoverable timeouts
+  now log at WARNING instead of ERROR. Net: ~2 launches/cycle, no wasted
+  dead-log query. New `tests/test_bluetooth.py` covers all four.
+
 ### Added
 
 - **Pydantic config schema** (`src/config/schema.py`). YAML files are now
