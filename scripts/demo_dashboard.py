@@ -11,6 +11,7 @@ Run from the repo root:
 from __future__ import annotations
 
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -85,6 +86,24 @@ def _install_demo_data() -> None:
     dashboard.psutil.cpu_count = lambda logical=True: 16
 
 
+def _windows_chrome(svg: str) -> str:
+    """Rich draws macOS traffic-light window buttons by default. This is a
+    Windows-only project, so strip those and draw Windows-style window controls
+    (minimize / maximize / close) at the top-right instead."""
+    svg = re.sub(r'\s*<circle[^>]*fill="#(?:ff5f57|febc2e|28c840)"[^>]*/>', "", svg)
+    m = re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', svg)
+    w = float(m.group(1)) if m else 1458.0
+    controls = (
+        '<g stroke="#c5c8c6" stroke-width="1.5" fill="none" stroke-linecap="round">'
+        f'<line x1="{w-70:.0f}" y1="26" x2="{w-56:.0f}" y2="26"/>'
+        f'<rect x="{w-46:.0f}" y="19" width="13" height="13"/>'
+        f'<line x1="{w-23:.0f}" y1="19" x2="{w-10:.0f}" y2="32"/>'
+        f'<line x1="{w-10:.0f}" y1="19" x2="{w-23:.0f}" y2="32"/>'
+        "</g>"
+    )
+    return svg.replace("</svg>", controls + "\n</svg>")
+
+
 def main() -> None:
     _install_demo_data()
 
@@ -96,9 +115,12 @@ def main() -> None:
     dashboard.render(layout)
     console.print(layout)
 
+    svg = console.export_svg(title="OS Agent — Live Dashboard (demo data)")
+    svg = _windows_chrome(svg)
+
     out = ROOT / "docs" / "dashboard-demo.svg"
     out.parent.mkdir(parents=True, exist_ok=True)
-    console.save_svg(str(out), title="OS Agent — Live Dashboard (demo data)")
+    out.write_text(svg, encoding="utf-8")
     print(f"wrote {out}")
 
 

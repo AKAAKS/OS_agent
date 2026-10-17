@@ -170,9 +170,6 @@
 
     <rect fill="#292929" stroke="rgba(255,255,255,0.35)" stroke-width="1" x="1" y="1" width="1456" height="1024" rx="8"/><text class="terminal-3416346700-title" fill="#c5c8c6" text-anchor="middle" x="728" y="27">OS&#160;Agent&#160;—&#160;Live&#160;Dashboard&#160;(demo&#160;data)</text>
             <g transform="translate(26,22)">
-            <circle cx="0" cy="0" r="7" fill="#ff5f57"/>
-            <circle cx="22" cy="0" r="7" fill="#febc2e"/>
-            <circle cx="44" cy="0" r="7" fill="#28c840"/>
             </g>
         
     <g transform="translate(9, 41)" clip-path="url(#terminal-3416346700-clip-terminal)">
@@ -221,4 +218,5 @@
 </text>
     </g>
     </g>
+<g stroke="#c5c8c6" stroke-width="1.5" fill="none" stroke-linecap="round"><line x1="1388" y1="26" x2="1402" y2="26"/><rect x="1412" y="19" width="13" height="13"/><line x1="1435" y1="19" x2="1448" y2="32"/><line x1="1448" y1="19" x2="1435" y2="32"/></g>
 </svg>
